@@ -2,12 +2,15 @@
 name = "yet-claude-code"
 version = "0.1.0"
 description = "Multi-model AI assistant with MCP integration"
-readme = "README.md"
+readme = "CLAUDE.md"
 requires-python = ">=3.12"
 dependencies = [
+    "langchain>=0.1.0",
+    "langchain-openai",
+    "langchain-anthropic", 
+    "langchain-google-genai",
+    "langchain-community",
     "pyyaml",
-    "openai>=1.0.0",
-    "tiktoken",
 ]
 
 [project.optional-dependencies]
@@ -21,3 +24,8 @@ dev = [
 [project.scripts]
 ycc = "yet_claude_code.cli.app:main"
 yet-claude-code = "yet_claude_code.cli.app:main"
+
+[dependency-groups]
+dev = [
+    "ruff>=0.12.0",
+]
