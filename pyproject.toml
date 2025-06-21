@@ -1,0 +1,23 @@
+[project]
+name = "yet-claude-code"
+version = "0.1.0"
+description = "Multi-model AI assistant with MCP integration"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "pyyaml",
+    "openai>=1.0.0",
+    "tiktoken",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest",
+    "pytest-asyncio",
+    "ruff",
+    "mypy",
+]
+
+[project.scripts]
+ycc = "yet_claude_code.cli.app:main"
+yet-claude-code = "yet_claude_code.cli.app:main"
