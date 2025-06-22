@@ -38,9 +38,7 @@ def get_default_mcp_servers(
             command=[
                 "npx",
                 "-y",
-                "@modelcontextprotocol/server-git",
-                "--workingDir",
-                workspace_path,
+                "@cyanheads/git-mcp-server",
             ],
         ),
         "bash": MCPServerConfig(
@@ -49,7 +47,7 @@ def get_default_mcp_servers(
             command=[
                 "npx",
                 "-y",
-                "terminal-controller-mcp",
+                "@wonderwhy-er/desktop-commander",
             ],
         ),
     }
@@ -226,7 +224,7 @@ def get_optional_mcp_servers(
         command=[
             "npx",
             "-y",
-            "desktopcommandermcp",
+            "@wonderwhy-er/desktop-commander",
         ],
     )
 

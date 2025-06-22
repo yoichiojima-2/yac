@@ -32,12 +32,45 @@ class SimpleClientSession:
         self.process.stdin.write(request_json.encode())
         await self.process.stdin.drain()
 
-        # Read response
-        response_line = await self.process.stdout.readline()
-        if not response_line:
-            raise Exception(f"No response from server for {method}")
+        # Read response - handle large responses by reading more data if needed
+        try:
+            response_line = await self.process.stdout.readline()
+            if not response_line:
+                raise Exception(f"No response from server for {method}")
 
-        response = json.loads(response_line.decode().strip())
+            response_text = response_line.decode().strip()
+            response = json.loads(response_text)
+
+        except json.JSONDecodeError:
+            # If JSON decode fails, it might be a truncated large response
+            # Try reading more data
+            additional_data = b""
+            try:
+                # Read up to 1MB more data for large responses
+                while len(additional_data) < 1024 * 1024:  # 1MB limit
+                    chunk = await asyncio.wait_for(
+                        self.process.stdout.read(8192), timeout=1.0
+                    )
+                    if not chunk:
+                        break
+                    additional_data += chunk
+
+                    # Try parsing the combined data
+                    combined_text = (response_line + additional_data).decode().strip()
+                    try:
+                        response = json.loads(combined_text)
+                        break
+                    except json.JSONDecodeError:
+                        continue
+                else:
+                    raise Exception(f"Response too large or malformed for {method}")
+
+            except asyncio.TimeoutError:
+                raise Exception(f"Response incomplete or server hung for {method}")
+            except Exception as read_error:
+                raise Exception(
+                    f"Failed to read large response for {method}: {read_error}"
+                )
 
         if "error" in response:
             raise Exception(f"Server error for {method}: {response['error']}")
