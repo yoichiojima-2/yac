@@ -1,4 +1,5 @@
 import asyncio
+import random
 from typing import Dict, List, Optional, Any, Protocol
 
 from .config import MCPServerConfig, MCPTransport, MCPToolCall, MCPToolResult
@@ -20,22 +21,48 @@ class MCPClient:
         self.sessions: Dict[str, MCPSession] = {}
         self.processes: Dict[str, asyncio.subprocess.Process] = {}
         self.stdio_contexts: Dict[str, Any] = {}
+        self.retry_config = {
+            "max_retries": 3,
+            "base_delay": 1.0,
+            "max_delay": 30.0,
+            "exponential_base": 2.0,
+            "jitter": True,
+        }
 
     async def add_server(self, config: MCPServerConfig) -> bool:
-        try:
-            self.servers[config.name] = config
+        """Add and connect to MCP server with retry logic."""
+        self.servers[config.name] = config
 
-            if config.transport == MCPTransport.STDIO:
-                await self._connect_stdio_server(config)
-            elif config.transport == MCPTransport.SSE:
-                await self._connect_sse_server(config)
-            elif config.transport == MCPTransport.HTTP:
-                await self._connect_http_server(config)
+        for attempt in range(int(self.retry_config["max_retries"])):
+            try:
+                if config.transport == MCPTransport.STDIO:
+                    await self._connect_stdio_server(config)
+                elif config.transport == MCPTransport.SSE:
+                    await self._connect_sse_server(config)
+                elif config.transport == MCPTransport.HTTP:
+                    await self._connect_http_server(config)
 
-            return True
-        except Exception as e:
-            print(f"Failed to connect to server {config.name}: {e}")
-            return False
+                return True
+
+            except Exception as e:
+                is_last_attempt = attempt == self.retry_config["max_retries"] - 1
+
+                if is_last_attempt:
+                    print(
+                        f"Failed to connect to server {config.name} after {self.retry_config['max_retries']} attempts: {e}"
+                    )
+                    return False
+                else:
+                    delay = self._calculate_retry_delay(attempt)
+                    print(
+                        f"Connection attempt {attempt + 1} failed for {config.name}, retrying in {delay:.1f}s: {e}"
+                    )
+                    await asyncio.sleep(delay)
+
+                    # Clean up failed connection before retry
+                    await self._cleanup_failed_connection(config.name)
+
+        return False
 
     async def _connect_stdio_server(self, config: MCPServerConfig):
         print(f"Connecting to {config.name} with command: {config.command}")
@@ -202,6 +229,42 @@ class MCPClient:
             return True
 
         return False
+
+    def _calculate_retry_delay(self, attempt: int) -> float:
+        """Calculate exponential backoff delay with optional jitter."""
+        delay = self.retry_config["base_delay"] * (
+            self.retry_config["exponential_base"] ** attempt
+        )
+        delay = min(delay, self.retry_config["max_delay"])
+
+        if self.retry_config["jitter"]:
+            # Add random jitter (±25% of delay)
+            jitter = delay * 0.25 * (2 * random.random() - 1)
+            delay += jitter
+
+        return max(delay, 0.1)  # Minimum 100ms delay
+
+    async def _cleanup_failed_connection(self, server_name: str):
+        """Clean up resources from a failed connection attempt."""
+        if server_name in self.sessions:
+            try:
+                await self.sessions[server_name].close()
+                del self.sessions[server_name]
+            except Exception:
+                pass  # Ignore cleanup errors
+
+        if server_name in self.processes:
+            try:
+                self.processes[server_name].terminate()
+                del self.processes[server_name]
+            except Exception:
+                pass  # Ignore cleanup errors
+
+        if server_name in self.stdio_contexts:
+            try:
+                del self.stdio_contexts[server_name]
+            except Exception:
+                pass  # Ignore cleanup errors
 
     async def close_all(self):
         for name in list(self.sessions.keys()):

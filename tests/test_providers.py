@@ -5,7 +5,7 @@ from yet_claude_code.cli.config import Config
 def test_config_defaults():
     config = Config()
     assert config.get_provider() == "openai"
-    assert config.get_model() == "gpt-4-turbo-preview"
+    assert config.get_model() == "o3-mini"
     assert config.should_stream() is True
 
 

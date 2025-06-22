@@ -36,3 +36,11 @@ class Display:
   /help   - Show this help
   /exit   - Exit the application
   /clear  - Clear conversation history""")
+
+    def show_loading(self, message: str = "Processing..."):
+        """Show a loading indicator."""
+        print(self._color(f"⏳ {message}", "93"), end="", flush=True)
+
+    def clear_loading(self):
+        """Clear the loading line."""
+        print("\r" + " " * 50 + "\r", end="", flush=True)

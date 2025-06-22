@@ -1,9 +1,10 @@
 import os
 import json
 from pathlib import Path
-from typing import Dict, List
+from typing import Dict, List, Optional
 
 from ..mcp.config import MCPServerConfig, MCPTransport
+from .validators import ConfigValidator, ValidationReporter
 
 
 class Config:
@@ -12,6 +13,8 @@ class Config:
         self.config_file = self.config_dir / "config.json"
         self.config_dir.mkdir(exist_ok=True)
         self._config_data = self._load_config()
+        self.validator = ConfigValidator()
+        self.reporter = ValidationReporter()
 
     def get_provider(self) -> str:
         return os.getenv("YCC_PROVIDER", "openai")
@@ -86,3 +89,66 @@ class Config:
 
     def list_mcp_servers(self) -> List[str]:
         return list(self._config_data.get("mcp_servers", {}).keys())
+
+    def validate_configuration(self, workspace_path: Optional[str] = None) -> str:
+        """Validate the current configuration and return a report."""
+        all_issues = []
+
+        # Validate provider/model/API key
+        provider = self.get_provider()
+        model = self.get_model()
+        api_key = self.get_api_key(provider)
+
+        provider_issues = self.validator.validate_provider_config(
+            provider, model, api_key
+        )
+        all_issues.extend(provider_issues)
+
+        # Validate MCP servers
+        for name, server_data in self._config_data.get("mcp_servers", {}).items():
+            server_issues = self.validator.validate_mcp_server_config(server_data)
+            # Add server name context to issues
+            for issue in server_issues:
+                if issue.field:
+                    issue.field = f"{name}.{issue.field}"
+                else:
+                    issue.field = name
+            all_issues.extend(server_issues)
+
+        # Validate environment
+        env_issues = self.validator.validate_environment()
+        all_issues.extend(env_issues)
+
+        # Validate workspace if provided
+        if workspace_path:
+            workspace_issues = self.validator.validate_workspace(workspace_path)
+            all_issues.extend(workspace_issues)
+
+        # Generate report
+        summary = self.reporter.get_summary(all_issues)
+        details = self.reporter.format_issues(all_issues)
+
+        return f"{summary}\n\n{details}" if all_issues else summary
+
+    def has_validation_errors(self, workspace_path: Optional[str] = None) -> bool:
+        """Check if configuration has any error-level validation issues."""
+        # Quick validation without generating full report
+        all_issues = []
+
+        provider = self.get_provider()
+        model = self.get_model()
+        api_key = self.get_api_key(provider)
+
+        all_issues.extend(
+            self.validator.validate_provider_config(provider, model, api_key)
+        )
+
+        for server_data in self._config_data.get("mcp_servers", {}).values():
+            all_issues.extend(self.validator.validate_mcp_server_config(server_data))
+
+        all_issues.extend(self.validator.validate_environment())
+
+        if workspace_path:
+            all_issues.extend(self.validator.validate_workspace(workspace_path))
+
+        return self.reporter.has_errors(all_issues)
