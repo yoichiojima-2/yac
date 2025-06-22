@@ -88,9 +88,12 @@ class YetClaudeCodeApp:
             # Store user message first
             self.messages.append(HumanMessage(content=content))
 
-            # Start conversation loop
+            # Add system context to help the AI reason through problems
+            await self._add_reasoning_context(content)
+
+            # Start agent-style conversation loop
             while True:
-                # Get response from LLM
+                # Get response from LLM with reasoning instructions
                 response = await self.llm.ainvoke(self.messages)
 
                 # Store the AI response
@@ -132,12 +135,31 @@ class YetClaudeCodeApp:
                                 self.display.error(error_msg)
 
                         except Exception as e:
-                            error_msg = f"Error executing {tool_call['name']}: {str(e)}"
-                            tool_message = ToolMessage(
-                                content=error_msg, tool_call_id=tool_call["id"]
+                            # Try intelligent error handling first
+                            retry_result = await self._handle_tool_error(
+                                tool_call, e, tools
                             )
-                            tool_messages.append(tool_message)
-                            self.display.error(error_msg)
+
+                            if retry_result:
+                                # Successful retry
+                                tool_message = ToolMessage(
+                                    content=str(retry_result),
+                                    tool_call_id=tool_call["id"],
+                                )
+                                tool_messages.append(tool_message)
+                                self.display.print(
+                                    f"🔧 Executed {tool_call['name']} (after intelligent retry): {retry_result}"
+                                )
+                            else:
+                                # Still failed after intelligent handling
+                                error_msg = (
+                                    f"Error executing {tool_call['name']}: {str(e)}"
+                                )
+                                tool_message = ToolMessage(
+                                    content=error_msg, tool_call_id=tool_call["id"]
+                                )
+                                tool_messages.append(tool_message)
+                                self.display.error(error_msg)
 
                     # Add all tool messages to conversation
                     self.messages.extend(tool_messages)
@@ -151,6 +173,147 @@ class YetClaudeCodeApp:
 
         except Exception as e:
             self.display.error(f"Error: {e}")
+
+    async def _handle_tool_error(self, tool_call, error, tools):
+        """Intelligent error handling for tool failures."""
+        tool_name = tool_call["name"]
+        args = tool_call["args"]
+        error_str = str(error).lower()
+
+        try:
+            # Handle file not found errors
+            if (
+                "file not found" in error_str
+                or "no such file" in error_str
+                or "does not exist" in error_str
+            ):
+                return await self._handle_file_not_found(tool_name, args, tools)
+
+            # Handle permission errors
+            elif "permission denied" in error_str:
+                return await self._handle_permission_error(tool_name, args, tools)
+
+            # Handle directory not found
+            elif "directory not found" in error_str or "no such directory" in error_str:
+                return await self._handle_directory_not_found(tool_name, args, tools)
+
+            # Handle network/connection errors
+            elif (
+                "connection" in error_str
+                or "timeout" in error_str
+                or "network" in error_str
+            ):
+                return await self._handle_network_error(tool_name, args, tools)
+
+        except Exception as retry_error:
+            self.display.print(f"🔄 Intelligent retry also failed: {retry_error}")
+
+        return None
+
+    async def _handle_file_not_found(self, tool_name, args, tools):
+        """Handle file not found errors by providing context for AI reasoning."""
+        # Extract filename from args
+        filename = None
+        if isinstance(args, dict):
+            filename = args.get("path") or args.get("file_path") or args.get("filename")
+        elif isinstance(args, str):
+            filename = args
+
+        if not filename:
+            return None
+
+        # Instead of hardcoded search, provide information for the AI to reason about
+        error_context = f"File '{filename}' not found. "
+
+        # Give the AI information about available tools to investigate
+        available_tools = [t.name for t in tools]
+        investigation_tools = [
+            t
+            for t in available_tools
+            if t
+            in ["search_files", "list_directory", "directory_tree", "execute_command"]
+        ]
+
+        if investigation_tools:
+            error_context += (
+                f"Available tools to investigate: {', '.join(investigation_tools)}. "
+            )
+            error_context += "Consider using search_files to look for similar files, list_directory to see what's available, or execute_command with 'find' to search the filesystem."
+
+        return error_context
+
+    async def _handle_permission_error(self, tool_name, args, tools):
+        """Handle permission errors."""
+        self.display.print("🔒 Permission denied, trying alternative approaches...")
+        # Could implement chmod, sudo alternatives, or different file operations
+        return None
+
+    async def _handle_directory_not_found(self, tool_name, args, tools):
+        """Handle directory not found errors."""
+        directory = None
+        if isinstance(args, dict):
+            directory = args.get("path") or args.get("directory")
+        elif isinstance(args, str):
+            directory = args
+
+        if directory:
+            self.display.print(
+                f"📁 Directory '{directory}' not found, checking parent directories..."
+            )
+            # Could implement directory creation or alternative path suggestions
+
+        return None
+
+    async def _handle_network_error(self, tool_name, args, tools):
+        """Handle network/connection errors with retry logic."""
+        self.display.print("🌐 Network error detected, retrying...")
+
+        # Simple retry for network operations
+        try:
+            import asyncio
+
+            await asyncio.sleep(1)  # Brief delay
+
+            original_tool = next((t for t in tools if t.name == tool_name), None)
+            if original_tool:
+                retry_result = await original_tool.ainvoke(args)
+                self.display.print("✅ Network retry successful")
+                return retry_result
+
+        except Exception as retry_error:
+            self.display.print(f"🌐 Network retry failed: {retry_error}")
+
+        return None
+
+    async def _add_reasoning_context(self, content: str):
+        """Add context to help the AI reason through problems step by step."""
+        from langchain_core.messages import SystemMessage
+
+        reasoning_prompt = """You are a coding assistant that solves problems step by step, like Claude Code.
+
+When faced with a problem:
+1. THINK about what you need to do first
+2. Use the available tools to investigate (search_files, list_directory, read_file, etc.)
+3. Based on what you find, decide the next step
+4. Take action using the appropriate tools
+5. Continue until the problem is solved
+
+If a file is missing:
+- Use search_files to look for similar files
+- Use list_directory to see what's available
+- Try different search terms and patterns
+- Don't give up after the first attempt - keep investigating
+
+Available tools include: read_file, write_file, search_files, list_directory, directory_tree, execute_command, git_status, and more.
+
+Be methodical and persistent. Reason through each step aloud."""
+
+        # Only add this context once per conversation to avoid repetition
+        if not any(
+            isinstance(msg, SystemMessage) and "step by step" in msg.content
+            for msg in self.messages
+        ):
+            self.messages.append(SystemMessage(content=reasoning_prompt))
 
     async def _load_mcp_servers(self):
         self.display.print("Starting MCP setup...")

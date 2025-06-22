@@ -159,7 +159,6 @@ class TestMCPDefaults:
     def test_get_optional_servers_always_available(self):
         servers = get_optional_mcp_servers()
         # These should always be present regardless of env vars
-        assert "sequential-thinking" in servers
         assert "sqlite" in servers
         assert "memory" in servers
         assert "desktop-commander" in servers

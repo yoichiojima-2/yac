@@ -19,7 +19,7 @@ class Config:
     def get_model(self) -> str:
         provider = self.get_provider()
         defaults = {
-            "openai": "gpt-4-turbo-preview",
+            "openai": "o3-mini",
             "anthropic": "claude-3-sonnet-20240229",
             "google": "gemini-pro",
         }

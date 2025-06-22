@@ -38,9 +38,7 @@ def get_default_mcp_servers(
             command=[
                 "npx",
                 "-y",
-                "@modelcontextprotocol/server-git",
-                "--workingDir",
-                workspace_path,
+                "@cyanheads/git-mcp-server",
             ],
         ),
         "bash": MCPServerConfig(
@@ -49,7 +47,7 @@ def get_default_mcp_servers(
             command=[
                 "npx",
                 "-y",
-                "terminal-controller-mcp",
+                "@wonderwhy-er/desktop-commander",
             ],
         ),
     }
@@ -76,6 +74,17 @@ def get_default_mcp_servers(
             "npx",
             "-y",
             "@modelcontextprotocol/server-puppeteer",
+        ],
+    )
+
+    # Sequential Thinking MCP (moved from optional for enhanced reasoning)
+    servers["sequential-thinking"] = MCPServerConfig(
+        name="sequential-thinking",
+        transport=MCPTransport.STDIO,
+        command=[
+            "npx",
+            "-y",
+            "@modelcontextprotocol/server-sequential-thinking",
         ],
     )
 
@@ -161,16 +170,16 @@ def get_optional_mcp_servers(
             env={"GITHUB_TOKEN": github_token},
         )
 
-    # Sequential Thinking MCP (useful for complex reasoning)
-    servers["sequential-thinking"] = MCPServerConfig(
-        name="sequential-thinking",
-        transport=MCPTransport.STDIO,
-        command=[
-            "npx",
-            "-y",
-            "@modelcontextprotocol/server-sequential-thinking",
-        ],
-    )
+    # Sequential Thinking MCP (useful for complex reasoning) - moved to default
+    # servers["sequential-thinking"] = MCPServerConfig(
+    #     name="sequential-thinking",
+    #     transport=MCPTransport.STDIO,
+    #     command=[
+    #         "npx",
+    #         "-y",
+    #         "@modelcontextprotocol/server-sequential-thinking",
+    #     ],
+    # )
 
     # Slack MCP server (requires Slack bot token)
     slack_bot_token = os.getenv("SLACK_BOT_TOKEN")
@@ -215,7 +224,7 @@ def get_optional_mcp_servers(
         command=[
             "npx",
             "-y",
-            "desktopcommandermcp",
+            "@wonderwhy-er/desktop-commander",
         ],
     )
 
