@@ -3,13 +3,14 @@ import sys
 from typing import Optional
 
 # Use the newer memory approach instead of deprecated ConversationBufferMemory
-from langchain_core.messages import HumanMessage, AIMessage
+from langchain_core.messages import HumanMessage, ToolMessage
 from pydantic import SecretStr
 from .config import Config
 from .display import Display
 from ..mcp.client import MCPClient
 from ..mcp.config import MCPServerConfig, MCPTransport
-from ..mcp.defaults import get_default_mcp_servers
+from ..mcp.defaults import get_default_mcp_servers, get_optional_mcp_servers
+from ..mcp.langchain_bridge import MCPLangChainBridge
 
 
 class YetClaudeCodeApp:
@@ -17,8 +18,10 @@ class YetClaudeCodeApp:
         self.config = Config()
         self.display = Display()
         self.messages: list = []  # Store conversation history directly
-        self.llm = self._create_llm(provider, model)
+        self.base_llm = self._create_llm(provider, model)
+        self.llm = self.base_llm  # Will be updated with tools after MCP setup
         self.mcp_client = MCPClient()
+        self.bridge = MCPLangChainBridge(self.mcp_client)
         self.running = True
 
     def _create_llm(self, provider: Optional[str] = None, model: Optional[str] = None):
@@ -70,7 +73,7 @@ class YetClaudeCodeApp:
                 if user_input.lower() in ["/exit", "/quit", "/q"]:
                     break
                 if user_input.startswith("/"):
-                    self.handle_command(user_input)
+                    await self.handle_command(user_input)
                     continue
                 await self.process_message(user_input)
             except (KeyboardInterrupt, EOFError):
@@ -82,15 +85,70 @@ class YetClaudeCodeApp:
 
     async def process_message(self, content: str):
         try:
-            # Add user message to history
-            messages = self.messages + [HumanMessage(content=content)]
-            response = await self.llm.ainvoke(messages)
-
-            # Store both messages in history
+            # Store user message first
             self.messages.append(HumanMessage(content=content))
-            self.messages.append(AIMessage(content=response.content))
 
-            self.display.print_response(response.content)
+            # Start conversation loop
+            while True:
+                # Get response from LLM
+                response = await self.llm.ainvoke(self.messages)
+
+                # Store the AI response
+                self.messages.append(response)
+
+                # Handle tool calls if present
+                if hasattr(response, "tool_calls") and response.tool_calls:
+                    # Execute each tool call and collect results
+                    tool_messages = []
+
+                    for tool_call in response.tool_calls:
+                        try:
+                            # Find the tool by name
+                            tools = await self.bridge.get_langchain_tools()
+                            tool = next(
+                                (t for t in tools if t.name == tool_call["name"]), None
+                            )
+
+                            if tool:
+                                # Execute the tool
+                                tool_result = await tool.ainvoke(tool_call["args"])
+
+                                # Create tool message
+                                tool_message = ToolMessage(
+                                    content=str(tool_result),
+                                    tool_call_id=tool_call["id"],
+                                )
+                                tool_messages.append(tool_message)
+
+                                self.display.print(
+                                    f"🔧 Executed {tool_call['name']}: {tool_result}"
+                                )
+                            else:
+                                error_msg = f"Tool '{tool_call['name']}' not found"
+                                tool_message = ToolMessage(
+                                    content=error_msg, tool_call_id=tool_call["id"]
+                                )
+                                tool_messages.append(tool_message)
+                                self.display.error(error_msg)
+
+                        except Exception as e:
+                            error_msg = f"Error executing {tool_call['name']}: {str(e)}"
+                            tool_message = ToolMessage(
+                                content=error_msg, tool_call_id=tool_call["id"]
+                            )
+                            tool_messages.append(tool_message)
+                            self.display.error(error_msg)
+
+                    # Add all tool messages to conversation
+                    self.messages.extend(tool_messages)
+
+                    # Continue the loop to get LLM's final response
+                    continue
+                else:
+                    # No tool calls, print response and exit loop
+                    self.display.print_response(response.content)
+                    break
+
         except Exception as e:
             self.display.error(f"Error: {e}")
 
@@ -131,12 +189,19 @@ class YetClaudeCodeApp:
             self.display.print(
                 f"MCP setup complete - {connected_servers} server(s) connected"
             )
+            # Bind MCP tools to the LLM
+            try:
+                self.llm = await self.bridge.bind_tools_to_llm(self.base_llm)
+                self.display.print("✓ MCP tools bound to LLM")
+            except Exception as e:
+                self.display.print(f"Warning: Failed to bind MCP tools: {e}")
+                self.llm = self.base_llm
         else:
             self.display.print(
                 "MCP setup complete - no servers connected (chat still works!)"
             )
 
-    def handle_command(self, command: str):
+    async def handle_command(self, command: str):
         parts = command.split()
         cmd = parts[0]
 
@@ -146,13 +211,13 @@ class YetClaudeCodeApp:
             self.messages.clear()
             self.display.print("Conversation cleared.")
         elif cmd == "/mcp":
-            asyncio.create_task(self._handle_mcp_command(parts[1:]))
+            await self._handle_mcp_command(parts[1:])
         else:
             self.display.print(f"Unknown command: {command}")
 
     async def _handle_mcp_command(self, args):
         if not args:
-            self.display.print("Usage: /mcp <add|remove|list|tools>")
+            self.display.print("Usage: /mcp <add|remove|list|tools|available>")
             return
 
         subcmd = args[0]
@@ -172,6 +237,8 @@ class YetClaudeCodeApp:
         elif subcmd == "tools":
             server_name = args[1] if len(args) > 1 else None
             await self._list_mcp_tools(server_name)
+        elif subcmd == "available":
+            await self._list_available_mcp_servers()
         else:
             self.display.print(f"Unknown MCP command: {subcmd}")
 
@@ -232,6 +299,61 @@ class YetClaudeCodeApp:
                     )
         else:
             self.display.print("No tools available")
+
+    async def _list_available_mcp_servers(self):
+        """List all available MCP servers (default + optional)."""
+        import os
+
+        self.display.print("Available MCP Servers:")
+        self.display.print("")
+
+        # Show default servers (always available)
+        default_servers = get_default_mcp_servers()
+        self.display.print("Default servers (always available):")
+        for name, config in default_servers.items():
+            status = (
+                "✓ Connected" if name in self.mcp_client.sessions else "○ Available"
+            )
+            self.display.print(f"  {status} {name}")
+            self.display.print(f"    Command: {' '.join(config.command)}")
+
+        self.display.print("")
+
+        # Show optional servers
+        optional_servers = get_optional_mcp_servers()
+        self.display.print("Optional servers (require setup/API keys):")
+        for name, config in optional_servers.items():
+            # Check if server would be enabled (has required env vars)
+            enabled = True
+            required_env_vars = []
+
+            if name == "github" and not os.getenv("GITHUB_TOKEN"):
+                enabled = False
+                required_env_vars.append("GITHUB_TOKEN")
+            elif name == "brave-search" and not os.getenv("BRAVE_API_KEY"):
+                enabled = False
+                required_env_vars.append("BRAVE_API_KEY")
+            elif name == "slack" and not os.getenv("SLACK_BOT_TOKEN"):
+                enabled = False
+                required_env_vars.append("SLACK_BOT_TOKEN")
+
+            if enabled:
+                status = (
+                    "✓ Connected" if name in self.mcp_client.sessions else "✓ Available"
+                )
+            else:
+                status = f"✗ Missing: {', '.join(required_env_vars)}"
+
+            self.display.print(f"  {status} {name}")
+            self.display.print(f"    Command: {' '.join(config.command)}")
+
+        self.display.print("")
+        self.display.print(
+            "To enable optional servers, set the required environment variables."
+        )
+        self.display.print(
+            "Use '/mcp add <name> stdio <command>' to add custom servers."
+        )
 
 
 def main():
