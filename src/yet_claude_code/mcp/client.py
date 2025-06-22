@@ -1,14 +1,23 @@
 import asyncio
-from typing import Dict, List, Optional, Any
-from mcp import ClientSession
+from typing import Dict, List, Optional, Any, Protocol
 
 from .config import MCPServerConfig, MCPTransport, MCPToolCall, MCPToolResult
 
 
+class MCPSession(Protocol):
+    """Protocol defining the interface for MCP sessions."""
+
+    async def list_tools(self) -> Any: ...
+
+    async def call_tool(self, name: str, arguments: Dict[str, Any]) -> Any: ...
+
+    async def close(self) -> None: ...
+
+
 class MCPClient:
-    def __init__(self):
+    def __init__(self) -> None:
         self.servers: Dict[str, MCPServerConfig] = {}
-        self.sessions: Dict[str, ClientSession] = {}
+        self.sessions: Dict[str, MCPSession] = {}
         self.processes: Dict[str, asyncio.subprocess.Process] = {}
         self.stdio_contexts: Dict[str, Any] = {}
 

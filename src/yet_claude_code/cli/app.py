@@ -4,6 +4,7 @@ from typing import Optional
 
 # Use the newer memory approach instead of deprecated ConversationBufferMemory
 from langchain_core.messages import HumanMessage, AIMessage
+from pydantic import SecretStr
 from .config import Config
 from .display import Display
 from ..mcp.client import MCPClient
@@ -32,15 +33,19 @@ class YetClaudeCodeApp:
             from langchain_openai import ChatOpenAI
 
             return ChatOpenAI(
-                model=model_name, api_key=api_key, streaming=self.config.should_stream()
+                model=model_name,
+                api_key=SecretStr(api_key),
+                streaming=self.config.should_stream(),
             )
         elif provider_name == "anthropic":
             from langchain_anthropic import ChatAnthropic
 
             return ChatAnthropic(
-                model=model_name,
-                anthropic_api_key=api_key,
+                model_name=model_name,
+                api_key=SecretStr(api_key),
                 streaming=self.config.should_stream(),
+                timeout=None,
+                stop=None,
             )
         elif provider_name == "google":
             from langchain_google_genai import ChatGoogleGenerativeAI
