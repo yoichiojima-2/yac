@@ -7,10 +7,13 @@ requires-python = ">=3.12"
 dependencies = [
     "langchain>=0.1.0",
     "langchain-openai",
-    "langchain-anthropic", 
+    "langchain-anthropic",
     "langchain-google-genai",
     "langchain-community",
     "pyyaml",
+    "mcp>=1.0.0",
+    "httpx",
+    "sseclient-py",
 ]
 
 [project.optional-dependencies]
@@ -19,6 +22,7 @@ dev = [
     "pytest-asyncio",
     "ruff",
     "mypy",
+    "pre-commit",
 ]
 
 [project.scripts]
@@ -27,5 +31,6 @@ yet-claude-code = "yet_claude_code.cli.app:main"
 
 [dependency-groups]
 dev = [
+    "pytest>=8.4.1",
     "ruff>=0.12.0",
 ]

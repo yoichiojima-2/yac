@@ -21,7 +21,7 @@ class BaseProvider(ABC):
     @abstractmethod
     async def complete(self, messages: List[Message], tools: List[Tool]) -> Response:
         pass
-    
+
     @abstractmethod
     async def stream(self, messages: List[Message], tools: List[Tool]) -> AsyncIterator[StreamChunk]:
         pass
@@ -36,10 +36,10 @@ Tools are primarily provided by MCP servers, with a thin wrapper for built-in to
 class MCPClient:
     async def connect(self, server_config: dict) -> MCPConnection:
         pass
-    
+
     async def list_tools(self) -> List[MCPTool]:
         pass
-    
+
     async def call_tool(self, name: str, arguments: dict) -> ToolResult:
         pass
 
@@ -48,7 +48,7 @@ class BuiltinTool(ABC):
     name: str
     description: str
     parameters: JSONSchema
-    
+
     @abstractmethod
     async def execute(self, **kwargs) -> ToolResult:
         pass
@@ -145,47 +145,47 @@ mcp_servers:
   filesystem:
     command: "npx"
     args: ["@modelcontextprotocol/server-filesystem", "/"]
-    
+
   # GitHub integration
   github:
     command: "npx"
     args: ["@modelcontextprotocol/server-github"]
     env:
       GITHUB_TOKEN: ${GITHUB_TOKEN}
-      
+
   # Web search
   brave-search:
     command: "npx"
     args: ["@modelcontextprotocol/server-brave-search"]
     env:
       BRAVE_API_KEY: ${BRAVE_API_KEY}
-      
+
   # Git operations
   git:
     command: "npx"
     args: ["@modelcontextprotocol/server-git"]
-    
+
   # Memory/knowledge graph
   memory:
     command: "npx"
     args: ["@modelcontextprotocol/server-memory"]
-    
+
   # Custom MCP server example
   my-tools:
     command: "python"
     args: ["-m", "my_mcp_server"]
-    
+
 # Built-in tools (only used if no MCP equivalent)
 tools:
   builtin:
     - conversation_history
     - context_info
-    
+
 # Context management
 context:
   max_tokens: 128000
   preserve_ratio: 0.8    # Keep 80% of context between turns
-  
+
 # Display preferences
 display:
   syntax_highlighting: true

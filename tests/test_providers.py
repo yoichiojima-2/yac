@@ -13,15 +13,15 @@ def test_config_env_vars():
     os.environ["YCC_PROVIDER"] = "anthropic"
     os.environ["YCC_MODEL"] = "claude-3-haiku-20240307"
     os.environ["YCC_STREAM"] = "false"
-    
+
     config = Config()
     assert config.get_provider() == "anthropic"
     assert config.get_model() == "claude-3-haiku-20240307"
     assert config.should_stream() is False
-    
+
     # Clean up
     del os.environ["YCC_PROVIDER"]
-    del os.environ["YCC_MODEL"] 
+    del os.environ["YCC_MODEL"]
     del os.environ["YCC_STREAM"]
 
 
