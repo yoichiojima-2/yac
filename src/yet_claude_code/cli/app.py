@@ -88,6 +88,13 @@ class YetClaudeCodeApp:
             # Store user message first
             self.messages.append(HumanMessage(content=content))
 
+            # Check if we should think more for complex queries
+            if self._should_think_more(content):
+                await self._perform_thinking(content)
+
+            # Try to understand user intent and prepare context
+            await self._prepare_context_for_request(content)
+
             # Start conversation loop
             while True:
                 # Get response from LLM
@@ -132,12 +139,31 @@ class YetClaudeCodeApp:
                                 self.display.error(error_msg)
 
                         except Exception as e:
-                            error_msg = f"Error executing {tool_call['name']}: {str(e)}"
-                            tool_message = ToolMessage(
-                                content=error_msg, tool_call_id=tool_call["id"]
+                            # Try intelligent error handling first
+                            retry_result = await self._handle_tool_error(
+                                tool_call, e, tools
                             )
-                            tool_messages.append(tool_message)
-                            self.display.error(error_msg)
+
+                            if retry_result:
+                                # Successful retry
+                                tool_message = ToolMessage(
+                                    content=str(retry_result),
+                                    tool_call_id=tool_call["id"],
+                                )
+                                tool_messages.append(tool_message)
+                                self.display.print(
+                                    f"🔧 Executed {tool_call['name']} (after intelligent retry): {retry_result}"
+                                )
+                            else:
+                                # Still failed after intelligent handling
+                                error_msg = (
+                                    f"Error executing {tool_call['name']}: {str(e)}"
+                                )
+                                tool_message = ToolMessage(
+                                    content=error_msg, tool_call_id=tool_call["id"]
+                                )
+                                tool_messages.append(tool_message)
+                                self.display.error(error_msg)
 
                     # Add all tool messages to conversation
                     self.messages.extend(tool_messages)
@@ -147,10 +173,364 @@ class YetClaudeCodeApp:
                 else:
                     # No tool calls, print response and exit loop
                     self.display.print_response(response.content)
+
+                    # Check if we should suggest follow-up actions
+                    await self._suggest_followup_actions(response.content)
                     break
 
         except Exception as e:
             self.display.error(f"Error: {e}")
+
+    def _should_think_more(self, content: str) -> bool:
+        """Determine if the query requires deeper thinking."""
+        thinking_triggers = [
+            "complex",
+            "difficult",
+            "analyze",
+            "compare",
+            "explain why",
+            "how does",
+            "what if",
+            "debug",
+            "optimize",
+            "refactor",
+            "design",
+            "architecture",
+            "strategy",
+            "plan",
+            "solve",
+            "multiple",
+            "several",
+            "various",
+            "different approaches",
+        ]
+
+        # Check for complexity indicators
+        content_lower = content.lower()
+        word_count = len(content.split())
+
+        # Trigger thinking for:
+        # 1. Long queries (>20 words)
+        # 2. Queries containing thinking trigger words
+        # 3. Questions with multiple parts (contains "and" or multiple "?")
+        return (
+            word_count > 20
+            or any(trigger in content_lower for trigger in thinking_triggers)
+            or content_lower.count("and") > 1
+            or content.count("?") > 1
+        )
+
+    async def _perform_thinking(self, content: str):
+        """Perform sequential thinking before main response."""
+        try:
+            # Get available tools
+            tools = await self.bridge.get_langchain_tools()
+            thinking_tool = next(
+                (t for t in tools if t.name == "sequential_thinking"), None
+            )
+
+            if thinking_tool:
+                self.display.print("🤔 Thinking more deeply about your question...")
+
+                # Use the sequential thinking tool
+                thinking_result = await thinking_tool.ainvoke(
+                    {
+                        "query": content,
+                        "steps": 3,  # Number of thinking steps
+                    }
+                )
+
+                # Add thinking result to conversation context
+                from langchain_core.messages import SystemMessage
+
+                thinking_context = SystemMessage(
+                    content=f"I've thought about this query: {thinking_result}. Now I'll provide my response."
+                )
+                self.messages.append(thinking_context)
+
+        except Exception as e:
+            # If thinking fails, continue without it
+            self.display.print(f"Note: Enhanced thinking unavailable ({e})")
+
+    async def _handle_tool_error(self, tool_call, error, tools):
+        """Intelligent error handling for tool failures."""
+        tool_name = tool_call["name"]
+        args = tool_call["args"]
+        error_str = str(error).lower()
+
+        try:
+            # Handle file not found errors
+            if (
+                "file not found" in error_str
+                or "no such file" in error_str
+                or "does not exist" in error_str
+            ):
+                return await self._handle_file_not_found(tool_name, args, tools)
+
+            # Handle permission errors
+            elif "permission denied" in error_str:
+                return await self._handle_permission_error(tool_name, args, tools)
+
+            # Handle directory not found
+            elif "directory not found" in error_str or "no such directory" in error_str:
+                return await self._handle_directory_not_found(tool_name, args, tools)
+
+            # Handle network/connection errors
+            elif (
+                "connection" in error_str
+                or "timeout" in error_str
+                or "network" in error_str
+            ):
+                return await self._handle_network_error(tool_name, args, tools)
+
+        except Exception as retry_error:
+            self.display.print(f"🔄 Intelligent retry also failed: {retry_error}")
+
+        return None
+
+    async def _handle_file_not_found(self, tool_name, args, tools):
+        """Handle file not found errors by searching for the file."""
+        # Extract filename from args
+        filename = None
+        if isinstance(args, dict):
+            filename = args.get("path") or args.get("file_path") or args.get("filename")
+        elif isinstance(args, str):
+            filename = args
+
+        if not filename:
+            return None
+
+        self.display.print(f"🔍 File '{filename}' not found, searching...")
+
+        # Try to find the file using search tools
+        search_tool = next((t for t in tools if t.name == "search_files"), None)
+        if search_tool:
+            try:
+                # Extract just the basename for searching
+                import os
+
+                basename = os.path.basename(filename)
+                search_result = await search_tool.ainvoke({"query": basename})
+
+                if search_result and "found" in str(search_result).lower():
+                    self.display.print(f"✅ Found similar files: {search_result}")
+
+                    # Try to extract the first valid path and retry original operation
+                    if hasattr(search_result, "split"):
+                        potential_files = [
+                            line.strip()
+                            for line in str(search_result).split("\n")
+                            if basename.lower() in line.lower()
+                        ]
+
+                        if potential_files:
+                            # Try the first match
+                            suggested_path = (
+                                potential_files[0].split(":")[0]
+                                if ":" in potential_files[0]
+                                else potential_files[0]
+                            )
+
+                            # Retry original tool with corrected path
+                            original_tool = next(
+                                (t for t in tools if t.name == tool_name), None
+                            )
+                            if original_tool:
+                                corrected_args = (
+                                    args.copy()
+                                    if isinstance(args, dict)
+                                    else {"path": suggested_path}
+                                )
+                                if isinstance(corrected_args, dict):
+                                    corrected_args.update(
+                                        {
+                                            key: suggested_path
+                                            for key in ["path", "file_path", "filename"]
+                                            if key in corrected_args
+                                        }
+                                    )
+
+                                retry_result = await original_tool.ainvoke(
+                                    corrected_args
+                                )
+                                self.display.print(
+                                    f"🎯 Successfully found and used: {suggested_path}"
+                                )
+                                return retry_result
+
+            except Exception as search_error:
+                self.display.print(f"🔍 Search failed: {search_error}")
+
+        # Try directory listing as fallback
+        list_tool = next((t for t in tools if t.name == "list_directory"), None)
+        if list_tool:
+            try:
+                # List current directory to show available files
+                dir_result = await list_tool.ainvoke({"path": "."})
+                self.display.print(
+                    f"📁 Available files in current directory:\n{dir_result}"
+                )
+                return f"File '{filename}' not found. Available files: {dir_result}"
+            except Exception:
+                pass
+
+        return None
+
+    async def _handle_permission_error(self, tool_name, args, tools):
+        """Handle permission errors."""
+        self.display.print("🔒 Permission denied, trying alternative approaches...")
+        # Could implement chmod, sudo alternatives, or different file operations
+        return None
+
+    async def _handle_directory_not_found(self, tool_name, args, tools):
+        """Handle directory not found errors."""
+        directory = None
+        if isinstance(args, dict):
+            directory = args.get("path") or args.get("directory")
+        elif isinstance(args, str):
+            directory = args
+
+        if directory:
+            self.display.print(
+                f"📁 Directory '{directory}' not found, checking parent directories..."
+            )
+            # Could implement directory creation or alternative path suggestions
+
+        return None
+
+    async def _handle_network_error(self, tool_name, args, tools):
+        """Handle network/connection errors with retry logic."""
+        self.display.print("🌐 Network error detected, retrying...")
+
+        # Simple retry for network operations
+        try:
+            import asyncio
+
+            await asyncio.sleep(1)  # Brief delay
+
+            original_tool = next((t for t in tools if t.name == tool_name), None)
+            if original_tool:
+                retry_result = await original_tool.ainvoke(args)
+                self.display.print("✅ Network retry successful")
+                return retry_result
+
+        except Exception as retry_error:
+            self.display.print(f"🌐 Network retry failed: {retry_error}")
+
+        return None
+
+    async def _suggest_followup_actions(self, response_content):
+        """Suggest intelligent follow-up actions based on the response."""
+        if not response_content:
+            return
+
+        content_lower = response_content.lower()
+
+        # Suggest actions based on response content
+        suggestions = []
+
+        if "error" in content_lower or "failed" in content_lower:
+            suggestions.append("🔧 Run diagnostic commands to investigate the issue")
+            suggestions.append("📋 Check logs for more details")
+
+        elif "file" in content_lower and "found" in content_lower:
+            suggestions.append("📖 Open the file to examine its contents")
+            suggestions.append("✏️ Edit the file if modifications are needed")
+
+        elif "test" in content_lower:
+            suggestions.append("🧪 Run the test suite to verify functionality")
+            suggestions.append("📊 Check test coverage")
+
+        elif "install" in content_lower or "dependency" in content_lower:
+            suggestions.append("📦 Verify installation was successful")
+            suggestions.append("🔍 Check for version conflicts")
+
+        elif "git" in content_lower or "commit" in content_lower:
+            suggestions.append("📊 Check git status")
+            suggestions.append("🔄 Review changes before committing")
+
+        # Only show suggestions if we have any and they're relevant
+        if suggestions and len(response_content) > 50:  # Only for substantial responses
+            self.display.print("\n💡 Suggested next steps:")
+            for suggestion in suggestions[:2]:  # Limit to 2 suggestions
+                self.display.print(f"   • {suggestion}")
+
+    async def _prepare_context_for_request(self, content):
+        """Proactively prepare context based on user request."""
+        content_lower = content.lower()
+
+        try:
+            tools = await self.bridge.get_langchain_tools()
+
+            # If user mentions a file, try to check if it exists first
+            if any(
+                keyword in content_lower for keyword in ["read", "open", "show", "file"]
+            ):
+                # Look for potential file references
+                words = content.split()
+                for word in words:
+                    if "." in word and not word.startswith(".") and len(word) > 3:
+                        # Looks like a filename
+                        await self._proactive_file_check(word, tools)
+
+            # If user asks about project structure, prepare directory overview
+            elif any(
+                keyword in content_lower
+                for keyword in ["structure", "overview", "files", "project"]
+            ):
+                await self._proactive_project_overview(tools)
+
+            # If user mentions git, prepare git status
+            elif "git" in content_lower:
+                await self._proactive_git_status(tools)
+
+        except Exception:
+            # Context preparation is optional, don't fail the main request
+            pass
+
+    async def _proactive_file_check(self, filename, tools):
+        """Proactively check if a file exists and suggest alternatives if not."""
+        try:
+            read_tool = next((t for t in tools if t.name == "read_file"), None)
+            if read_tool:
+                # Try to read the file
+                await read_tool.ainvoke({"path": filename})
+                self.display.print(f"✅ Found file: {filename}")
+        except Exception:
+            # File doesn't exist, try to find similar files
+            search_tool = next((t for t in tools if t.name == "search_files"), None)
+            if search_tool:
+                try:
+                    import os
+
+                    basename = os.path.basename(filename)
+                    search_result = await search_tool.ainvoke({"query": basename})
+                    if search_result:
+                        self.display.print(
+                            f"📝 File '{filename}' not found, but found similar: {search_result}"
+                        )
+                except Exception:
+                    pass
+
+    async def _proactive_project_overview(self, tools):
+        """Provide project overview proactively."""
+        try:
+            dir_tool = next((t for t in tools if t.name == "list_directory"), None)
+            if dir_tool:
+                overview = await dir_tool.ainvoke({"path": "."})
+                self.display.print(f"📁 Project overview: {overview}")
+        except Exception:
+            pass
+
+    async def _proactive_git_status(self, tools):
+        """Proactively check git status."""
+        try:
+            git_tool = next((t for t in tools if t.name == "git_status"), None)
+            if git_tool:
+                status = await git_tool.ainvoke({})
+                self.display.print(f"🔍 Git status: {status}")
+        except Exception:
+            pass
 
     async def _load_mcp_servers(self):
         self.display.print("Starting MCP setup...")

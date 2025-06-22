@@ -79,6 +79,17 @@ def get_default_mcp_servers(
         ],
     )
 
+    # Sequential Thinking MCP (moved from optional for enhanced reasoning)
+    servers["sequential-thinking"] = MCPServerConfig(
+        name="sequential-thinking",
+        transport=MCPTransport.STDIO,
+        command=[
+            "npx",
+            "-y",
+            "@modelcontextprotocol/server-sequential-thinking",
+        ],
+    )
+
     return servers
 
 
@@ -161,16 +172,16 @@ def get_optional_mcp_servers(
             env={"GITHUB_TOKEN": github_token},
         )
 
-    # Sequential Thinking MCP (useful for complex reasoning)
-    servers["sequential-thinking"] = MCPServerConfig(
-        name="sequential-thinking",
-        transport=MCPTransport.STDIO,
-        command=[
-            "npx",
-            "-y",
-            "@modelcontextprotocol/server-sequential-thinking",
-        ],
-    )
+    # Sequential Thinking MCP (useful for complex reasoning) - moved to default
+    # servers["sequential-thinking"] = MCPServerConfig(
+    #     name="sequential-thinking",
+    #     transport=MCPTransport.STDIO,
+    #     command=[
+    #         "npx",
+    #         "-y",
+    #         "@modelcontextprotocol/server-sequential-thinking",
+    #     ],
+    # )
 
     # Slack MCP server (requires Slack bot token)
     slack_bot_token = os.getenv("SLACK_BOT_TOKEN")
