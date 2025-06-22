@@ -7,14 +7,16 @@ from langchain_core.messages import HumanMessage, ToolMessage
 from pydantic import SecretStr
 from .config import Config
 from .display import Display
+from .error_handlers import GracefulErrorMixin
 from ..mcp.client import MCPClient
 from ..mcp.config import MCPServerConfig, MCPTransport
 from ..mcp.defaults import get_default_mcp_servers, get_optional_mcp_servers
 from ..mcp.langchain_bridge import MCPLangChainBridge
 
 
-class YetClaudeCodeApp:
+class YetClaudeCodeApp(GracefulErrorMixin):
     def __init__(self, provider: Optional[str] = None, model: Optional[str] = None):
+        super().__init__()  # Initialize GracefulErrorMixin
         self.config = Config()
         self.display = Display()
         self.messages: list = []  # Store conversation history directly
@@ -91,10 +93,16 @@ class YetClaudeCodeApp:
             # Add system context to help the AI reason through problems
             await self._add_reasoning_context(content)
 
+            # Show thinking indicator
+            self.display.show_loading("🤔 Thinking...")
+
             # Start agent-style conversation loop
             while True:
                 # Get response from LLM with reasoning instructions
                 response = await self.llm.ainvoke(self.messages)
+
+                # Clear loading indicator
+                self.display.clear_loading()
 
                 # Store the AI response
                 self.messages.append(response)
@@ -113,8 +121,16 @@ class YetClaudeCodeApp:
                             )
 
                             if tool:
+                                # Show tool execution indicator
+                                self.display.show_loading(
+                                    f"🔧 Executing {tool_call['name']}..."
+                                )
+
                                 # Execute the tool
                                 tool_result = await tool.ainvoke(tool_call["args"])
+
+                                # Clear loading and show result
+                                self.display.clear_loading()
 
                                 # Create tool message
                                 tool_message = ToolMessage(
@@ -135,35 +151,23 @@ class YetClaudeCodeApp:
                                 self.display.error(error_msg)
 
                         except Exception as e:
-                            # Try intelligent error handling first
-                            retry_result = await self._handle_tool_error(
-                                tool_call, e, tools
+                            # Use graceful error handling with strategy pattern
+                            error_context = await self.handle_tool_error_gracefully(
+                                e, tool_call["name"], tool_call["args"], tools
                             )
 
-                            if retry_result:
-                                # Successful retry
-                                tool_message = ToolMessage(
-                                    content=str(retry_result),
-                                    tool_call_id=tool_call["id"],
-                                )
-                                tool_messages.append(tool_message)
-                                self.display.print(
-                                    f"🔧 Executed {tool_call['name']} (after intelligent retry): {retry_result}"
-                                )
-                            else:
-                                # Still failed after intelligent handling
-                                error_msg = (
-                                    f"Error executing {tool_call['name']}: {str(e)}"
-                                )
-                                tool_message = ToolMessage(
-                                    content=error_msg, tool_call_id=tool_call["id"]
-                                )
-                                tool_messages.append(tool_message)
-                                self.display.error(error_msg)
+                            # Create tool message with helpful context
+                            tool_message = ToolMessage(
+                                content=error_context, tool_call_id=tool_call["id"]
+                            )
+                            tool_messages.append(tool_message)
+                            self.display.print(f"🛠️  Error handled: {error_context}")
 
                     # Add all tool messages to conversation
                     self.messages.extend(tool_messages)
 
+                    # Show processing indicator for next iteration
+                    self.display.show_loading("🧠 Processing results...")
                     # Continue the loop to get LLM's final response
                     continue
                 else:
@@ -330,10 +334,17 @@ Be methodical and persistent. Reason through each step aloud."""
         # Connect to servers with timeout and error handling
         for server in servers.values():
             try:
+                # Show loading indicator for server connection
+                self.display.show_loading(f"Connecting to {server.name}...")
+
                 # Add timeout to prevent hanging
                 success = await asyncio.wait_for(
                     self.mcp_client.add_server(server), timeout=30.0
                 )
+
+                # Clear loading indicator
+                self.display.clear_loading()
+
                 if success:
                     self.display.print(f"✓ Connected to MCP server: {server.name}")
                 else:
@@ -341,8 +352,12 @@ Be methodical and persistent. Reason through each step aloud."""
                         f"✗ Failed to connect to MCP server: {server.name}"
                     )
             except asyncio.TimeoutError:
+                # Clear loading indicator on timeout
+                self.display.clear_loading()
                 self.display.print(f"✗ Timeout connecting to MCP server: {server.name}")
             except Exception as e:
+                # Clear loading indicator on error
+                self.display.clear_loading()
                 self.display.print(
                     f"✗ Error connecting to MCP server {server.name}: {e}"
                 )
