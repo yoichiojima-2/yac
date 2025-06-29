@@ -109,3 +109,7 @@ secrets.yaml
 
 # ruff
 .ruff_cache/
+
+# Node.js / React Ink UI
+node_modules/
+package-lock.json

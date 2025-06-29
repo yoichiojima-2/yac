@@ -15,7 +15,7 @@ from ..mcp.langchain_bridge import MCPLangChainBridge
 
 
 class YetClaudeCodeApp(GracefulErrorMixin):
-    def __init__(self, provider: Optional[str] = None, model: Optional[str] = None):
+    def __init__(self, provider: Optional[str] = None, model: Optional[str] = None, json_api: bool = False):
         super().__init__()  # Initialize GracefulErrorMixin
         self.config = Config()
         self.display = Display()
@@ -25,6 +25,7 @@ class YetClaudeCodeApp(GracefulErrorMixin):
         self.mcp_client = MCPClient()
         self.bridge = MCPLangChainBridge(self.mcp_client)
         self.running = True
+        self.json_api = json_api
 
     def _create_llm(self, provider: Optional[str] = None, model: Optional[str] = None):
         provider_name = provider or self.config.get_provider()
@@ -64,6 +65,12 @@ class YetClaudeCodeApp(GracefulErrorMixin):
             raise ValueError(f"Unsupported provider: {provider_name}")
 
     async def run(self):
+        if self.json_api:
+            await self._run_json_api()
+        else:
+            await self._run_interactive()
+
+    async def _run_interactive(self):
         self.display.welcome()
         await self._load_mcp_servers()
 
@@ -84,6 +91,326 @@ class YetClaudeCodeApp(GracefulErrorMixin):
                 self.display.error(str(e))
 
         self.display.goodbye()
+
+    async def _run_json_api(self):
+        """Run in JSON API mode for programmatic access."""
+        import json
+        
+        # Signal that we're connected
+        await self._json_output({"type": "connected"})
+        
+        # Load MCP servers
+        await self._load_mcp_servers()
+        
+        # Send initial status
+        await self._send_status()
+
+        while self.running:
+            try:
+                # Read JSON messages from stdin
+                line = input()
+                if not line.strip():
+                    continue
+                    
+                try:
+                    message = json.loads(line)
+                    await self._handle_json_message(message)
+                except json.JSONDecodeError:
+                    await self._json_output({
+                        "type": "error", 
+                        "data": "Invalid JSON message"
+                    })
+            except (KeyboardInterrupt, EOFError):
+                break
+            except Exception as e:
+                await self._json_output({
+                    "type": "error", 
+                    "data": str(e)
+                })
+
+    async def _handle_json_message(self, message: dict):
+        """Handle incoming JSON API messages."""
+        msg_type = message.get("type")
+        content = message.get("content", "")
+        msg_id = message.get("id", "")
+
+        if msg_type == "user_message":
+            await self._process_message_json(content, msg_id)
+        elif msg_type == "command":
+            await self._handle_command_json(content, msg_id)
+        elif msg_type == "status_request":
+            await self._send_status()
+        else:
+            await self._json_output({
+                "type": "error",
+                "data": f"Unknown message type: {msg_type}"
+            })
+
+    async def _process_message_json(self, content: str, msg_id: str):
+        """Process user message in JSON API mode."""
+        # Send user message event
+        await self._json_output({
+            "type": "message",
+            "data": {
+                "id": msg_id,
+                "type": "user",
+                "content": content,
+                "timestamp": self._get_timestamp()
+            }
+        })
+
+        try:
+            # Store user message
+            self.messages.append(HumanMessage(content=content))
+
+            # Add reasoning context
+            await self._add_reasoning_context(content)
+
+            # Show thinking status
+            await self._json_output({
+                "type": "status",
+                "data": {"loading": True, "tool_executing": None}
+            })
+
+            # Process with LLM
+            while True:
+                response = await self.llm.ainvoke(self.messages)
+                
+                # Update status
+                await self._json_output({
+                    "type": "status", 
+                    "data": {"loading": False, "tool_executing": None}
+                })
+
+                # Store AI response
+                self.messages.append(response)
+
+                # Handle tool calls
+                if hasattr(response, "tool_calls") and response.tool_calls:
+                    tool_messages = []
+
+                    for tool_call in response.tool_calls:
+                        try:
+                            # Signal tool execution start
+                            await self._json_output({
+                                "type": "tool_start",
+                                "data": {
+                                    "tool_name": tool_call["name"],
+                                    "args": tool_call["args"]
+                                }
+                            })
+
+                            await self._json_output({
+                                "type": "status",
+                                "data": {"loading": True, "tool_executing": tool_call["name"]}
+                            })
+
+                            # Execute tool
+                            tools = await self.bridge.get_langchain_tools()
+                            tool = next((t for t in tools if t.name == tool_call["name"]), None)
+
+                            if tool:
+                                tool_result = await tool.ainvoke(tool_call["args"])
+                                
+                                # Signal tool completion
+                                await self._json_output({
+                                    "type": "tool_result",
+                                    "data": {
+                                        "tool_name": tool_call["name"],
+                                        "result": str(tool_result)
+                                    }
+                                })
+
+                                tool_message = ToolMessage(
+                                    content=str(tool_result),
+                                    tool_call_id=tool_call["id"]
+                                )
+                                tool_messages.append(tool_message)
+                            else:
+                                error_msg = f"Tool '{tool_call['name']}' not found"
+                                tool_message = ToolMessage(
+                                    content=error_msg,
+                                    tool_call_id=tool_call["id"]
+                                )
+                                tool_messages.append(tool_message)
+                                
+                                await self._json_output({
+                                    "type": "error",
+                                    "data": error_msg
+                                })
+
+                        except Exception as e:
+                            error_context = await self.handle_tool_error_gracefully(
+                                e, tool_call["name"], tool_call["args"], tools
+                            )
+                            
+                            tool_message = ToolMessage(
+                                content=error_context,
+                                tool_call_id=tool_call["id"]
+                            )
+                            tool_messages.append(tool_message)
+                            
+                            await self._json_output({
+                                "type": "error",
+                                "data": error_context
+                            })
+
+                    # Add tool messages and continue
+                    self.messages.extend(tool_messages)
+                    
+                    await self._json_output({
+                        "type": "status",
+                        "data": {"loading": True, "tool_executing": None}
+                    })
+                    continue
+                else:
+                    # Send final response
+                    await self._json_output({
+                        "type": "message",
+                        "data": {
+                            "id": f"{msg_id}_response",
+                            "type": "assistant",
+                            "content": response.content,
+                            "timestamp": self._get_timestamp()
+                        }
+                    })
+                    break
+
+        except Exception as e:
+            await self._json_output({
+                "type": "error",
+                "data": str(e)
+            })
+
+    async def _handle_command_json(self, command: str, msg_id: str):
+        """Handle command in JSON API mode."""
+        try:
+            parts = command.split()
+            cmd = parts[0]
+
+            if cmd == "/help":
+                help_text = self._get_help_text()
+                await self._json_output({
+                    "type": "message",
+                    "data": {
+                        "id": f"{msg_id}_help",
+                        "type": "system",
+                        "content": help_text,
+                        "timestamp": self._get_timestamp()
+                    }
+                })
+            elif cmd == "/clear":
+                self.messages.clear()
+                await self._json_output({
+                    "type": "message",
+                    "data": {
+                        "id": f"{msg_id}_clear",
+                        "type": "system", 
+                        "content": "Conversation cleared.",
+                        "timestamp": self._get_timestamp()
+                    }
+                })
+            elif cmd == "/mcp":
+                await self._handle_mcp_command_json(parts[1:], msg_id)
+            else:
+                await self._json_output({
+                    "type": "error",
+                    "data": f"Unknown command: {command}"
+                })
+        except Exception as e:
+            await self._json_output({
+                "type": "error",
+                "data": str(e)
+            })
+
+    async def _handle_mcp_command_json(self, args, msg_id: str):
+        """Handle MCP commands in JSON API mode."""
+        if not args:
+            await self._json_output({
+                "type": "message",
+                "data": {
+                    "id": f"{msg_id}_mcp_help",
+                    "type": "system",
+                    "content": "Usage: /mcp <add|remove|list|tools|available>",
+                    "timestamp": self._get_timestamp()
+                }
+            })
+            return
+
+        subcmd = args[0]
+        
+        if subcmd == "list":
+            servers = self.config.list_mcp_servers()
+            content = "MCP Servers:\n" + "\n".join(f"  - {server}" for server in servers) if servers else "No MCP servers configured"
+            
+            await self._json_output({
+                "type": "message",
+                "data": {
+                    "id": f"{msg_id}_mcp_list",
+                    "type": "system",
+                    "content": content,
+                    "timestamp": self._get_timestamp()
+                }
+            })
+        elif subcmd == "tools":
+            server_name = args[1] if len(args) > 1 else None
+            tools = await self.mcp_client.list_tools(server_name)
+            
+            content = ""
+            if tools:
+                for server, server_tools in tools.items():
+                    content += f"Tools from {server}:\n"
+                    for tool in server_tools:
+                        content += f"  - {tool['name']}: {tool.get('description', 'No description')}\n"
+            else:
+                content = "No tools available"
+                
+            await self._json_output({
+                "type": "message",
+                "data": {
+                    "id": f"{msg_id}_mcp_tools",
+                    "type": "system", 
+                    "content": content,
+                    "timestamp": self._get_timestamp()
+                }
+            })
+
+    async def _send_status(self):
+        """Send current status in JSON API mode."""
+        connected_servers = list(self.mcp_client.sessions.keys())
+        current_model = f"{self.config.get_provider()}:{self.config.get_model()}"
+        
+        await self._json_output({
+            "type": "status",
+            "data": {
+                "connected_servers": connected_servers,
+                "current_model": current_model,
+                "loading": False,
+                "tool_executing": None
+            }
+        })
+
+    async def _json_output(self, data: dict):
+        """Output JSON data to stdout."""
+        import json
+        print(json.dumps(data), flush=True)
+
+    def _get_timestamp(self):
+        """Get current timestamp as ISO string."""
+        from datetime import datetime
+        return datetime.now().isoformat()
+
+    def _get_help_text(self):
+        """Get help text for commands."""
+        return """Available commands:
+/help - Show this help message
+/clear - Clear conversation history
+/mcp list - List MCP servers
+/mcp tools - List available tools
+/mcp available - Show all available servers
+/exit, /quit, /q - Exit the application
+
+Use Ctrl+C to exit at any time."""
 
     async def process_message(self, content: str):
         try:
@@ -542,10 +869,11 @@ def main():
     )
     parser.add_argument("--provider", help="AI provider (openai, anthropic, google)")
     parser.add_argument("--model", help="Model to use")
+    parser.add_argument("--json-api", action="store_true", help="Run in JSON API mode for programmatic access")
     args = parser.parse_args()
 
     try:
-        app = YetClaudeCodeApp(provider=args.provider, model=args.model)
+        app = YetClaudeCodeApp(provider=args.provider, model=args.model, json_api=args.json_api)
         asyncio.run(app.run())
     except KeyboardInterrupt:
         sys.exit(0)

@@ -1,0 +1,24 @@
+{
+  "name": "yet-claude-code-ui",
+  "version": "0.1.0",
+  "description": "React Ink UI for yet-claude-code",
+  "type": "module",
+  "main": "dist/index.js",
+  "scripts": {
+    "dev": "tsx src/ui/index.tsx",
+    "build": "tsc",
+    "start": "node dist/index.js",
+    "ui": "tsx src/ui/index.tsx",
+    "ui:dev": "tsx --watch src/ui/index.tsx"
+  },
+  "dependencies": {
+    "ink": "^4.4.1",
+    "react": "^18.2.0"
+  },
+  "devDependencies": {
+    "@types/node": "^20.10.0",
+    "@types/react": "^18.2.45",
+    "typescript": "^5.3.3",
+    "tsx": "^4.6.2"
+  }
+}
