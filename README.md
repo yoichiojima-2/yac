@@ -1,6 +1,6 @@
-# Yet Claude Code
+# yac
 
-An alternative implementation of Claude Code that provides model flexibility. While Claude Code only works with Claude models, this project delivers the same core features but with the ability to switch between different AI models.
+yac (yet-another-claude) is an alternative implementation of Claude Code that provides model flexibility. While Claude Code only works with Claude models, this project delivers the same core features but with the ability to switch between different AI models.
 
 ## Features
 
@@ -77,6 +77,6 @@ This is an early-stage project. Core features implemented:
 -  Provider abstraction layer
 -  OpenAI provider
 -  Basic CLI interface
-- ó MCP integration (in progress)
-- ó Additional providers (planned)
-- ó Context management (planned)
+- Ã³ MCP integration (in progress)
+- Ã³ Additional providers (planned)
+- Ã³ Context management (planned)
