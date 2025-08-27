@@ -1,5 +1,5 @@
 import os
-from yet_claude_code.cli.config import Config
+from yac.cli.config import Config
 
 
 def test_config_defaults():
@@ -10,9 +10,9 @@ def test_config_defaults():
 
 
 def test_config_env_vars():
-    os.environ["YCC_PROVIDER"] = "anthropic"
-    os.environ["YCC_MODEL"] = "claude-3-haiku-20240307"
-    os.environ["YCC_STREAM"] = "false"
+    os.environ["YAC_PROVIDER"] = "anthropic"
+    os.environ["YAC_MODEL"] = "claude-3-haiku-20240307"
+    os.environ["YAC_STREAM"] = "false"
 
     config = Config()
     assert config.get_provider() == "anthropic"
@@ -20,9 +20,9 @@ def test_config_env_vars():
     assert config.should_stream() is False
 
     # Clean up
-    del os.environ["YCC_PROVIDER"]
-    del os.environ["YCC_MODEL"]
-    del os.environ["YCC_STREAM"]
+    del os.environ["YAC_PROVIDER"]
+    del os.environ["YAC_MODEL"]
+    del os.environ["YAC_STREAM"]
 
 
 def test_api_key_retrieval():
