@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-`yet-claude-code` is an alternative implementation of Claude Code that provides model flexibility. While Claude Code only works with Claude models, this project aims to deliver the same core features but with the ability to switch between different AI models (e.g., GPT-4, Gemini, local models, etc.).
+`yac` (Yet Another Claude) is an alternative implementation of Claude Code that provides model flexibility. While Claude Code only works with Claude models, this project aims to deliver the same core features but with the ability to switch between different AI models (e.g., GPT-4, Gemini, local models, etc.).
 
 The project uses modern Python packaging standards with `pyproject.toml` configuration.
 
@@ -17,7 +17,7 @@ The project uses modern Python packaging standards with `pyproject.toml` configu
 ## Project Structure
 
 ```
-src/yet_claude_code/   # Main package directory
+src/yac/             # Main package directory
 ├── __init__.py       # Package initialization
 ├── main.py          # Main entry point
 ├── cli/             # Command-line interface
@@ -128,7 +128,7 @@ The project supports standard development workflows:
 1. **Dependencies**: Managed via `pyproject.toml` with automatic MCP server installation
 2. **Testing**: Run test suite with `python -m pytest tests/`
 3. **Linting**: Code quality checks via pre-commit hooks
-4. **Development**: CLI entry point at `src/yet_claude_code/cli/app.py`
+4. **Development**: CLI entry point at `src/yac/cli/app.py`
 
 ## Claude Code Feature Parity
 

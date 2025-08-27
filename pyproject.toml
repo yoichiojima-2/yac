@@ -1,7 +1,7 @@
 [project]
-name = "yet-claude-code"
+name = "yac"
 version = "0.1.0"
-description = "Multi-model AI assistant with MCP integration"
+description = "YAC (Yet Another Claude) - Multi-model AI assistant with MCP integration"
 readme = "CLAUDE.md"
 requires-python = ">=3.12"
 dependencies = [
@@ -26,8 +26,7 @@ dev = [
 ]
 
 [project.scripts]
-ycc = "yet_claude_code.cli.app:main"
-yet-claude-code = "yet_claude_code.cli.app:main"
+yac = "yac.cli.app:main"
 
 [dependency-groups]
 dev = [
