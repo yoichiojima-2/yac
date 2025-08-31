@@ -21,10 +21,10 @@ pip install -e .
 
 ```bash
 # Use default provider (OpenAI)
-ycc
+yac
 
 # Use a specific provider
-ycc --provider openai --model gpt-4
+yac --provider openai --model gpt-4
 
 # Set up API key
 export OPENAI_API_KEY=your-api-key
