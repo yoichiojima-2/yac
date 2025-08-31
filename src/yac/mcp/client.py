@@ -1,10 +1,8 @@
 """MCP Client for managing connections to MCP servers."""
 
-import asyncio
-import json
 import logging
 from typing import Dict, List, Optional, Any
-from .config import MCPServerConfig, MCPTransport
+from .config import MCPServerConfig
 from .simple_session import SimpleSession
 
 logger = logging.getLogger(__name__)
@@ -22,7 +20,7 @@ class MCPClient:
         try:
             session = SimpleSession()
             success = await session.connect(config)
-            
+
             if success:
                 self.sessions[config.name] = session
                 # Cache tools for this server
@@ -46,21 +44,25 @@ class MCPClient:
                 logger.error(f"Failed to remove MCP server {name}: {e}")
         return False
 
-    async def call_tool(self, server_name: str, tool_name: str, arguments: Dict[str, Any]) -> Any:
+    async def call_tool(
+        self, server_name: str, tool_name: str, arguments: Dict[str, Any]
+    ) -> Any:
         """Call a tool on a specific server."""
         if server_name not in self.sessions:
             raise ValueError(f"Server {server_name} not connected")
-        
+
         session = self.sessions[server_name]
         return await session.call_tool(tool_name, arguments)
 
-    async def list_tools(self, server_name: Optional[str] = None) -> Dict[str, List[Dict[str, Any]]]:
+    async def list_tools(
+        self, server_name: Optional[str] = None
+    ) -> Dict[str, List[Dict[str, Any]]]:
         """List available tools from servers."""
         if server_name:
             if server_name in self.tools_cache:
                 return {server_name: self.tools_cache[server_name]}
             return {}
-        
+
         return self.tools_cache.copy()
 
     async def get_all_tools(self) -> List[Dict[str, Any]]:
@@ -69,7 +71,7 @@ class MCPClient:
         for server_name, tools in self.tools_cache.items():
             for tool in tools:
                 tool_with_server = tool.copy()
-                tool_with_server['server_name'] = server_name
+                tool_with_server["server_name"] = server_name
                 all_tools.append(tool_with_server)
         return all_tools
 

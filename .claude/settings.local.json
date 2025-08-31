@@ -11,7 +11,8 @@
       "Read(/Users/yo/.npm/_npx/**)",
       "Bash(timeout 15 uv run:*)",
       "Bash(python:*)",
-      "Bash(git add:*)"
+      "Bash(git add:*)",
+      "Bash(git commit:*)"
     ],
     "deny": [],
     "ask": []
