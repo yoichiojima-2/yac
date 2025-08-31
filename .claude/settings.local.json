@@ -1,0 +1,19 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(uv pip:*)",
+      "Bash(timeout 5 uv run:*)",
+      "Bash(python3:*)",
+      "Bash(uv run:*)",
+      "Bash(python test_mcp_connection.py:*)",
+      "Bash(python test:*)",
+      "Read(/Users/yo/.npm/**)",
+      "Read(/Users/yo/.npm/_npx/**)",
+      "Bash(timeout 15 uv run:*)",
+      "Bash(python:*)",
+      "Bash(git add:*)"
+    ],
+    "deny": [],
+    "ask": []
+  }
+}

@@ -2,7 +2,7 @@
 
 from typing import Any, Dict, List, Optional
 from langchain_core.tools import StructuredTool
-from pydantic import Field, create_model
+from pydantic import BaseModel, Field, create_model
 from .client import MCPClient
 
 
@@ -46,15 +46,26 @@ class MCPLangChainBridge:
                 # Create tool function
                 tool_func = create_mcp_tool_function(tool_name, server, self.mcp_client)
 
-                # Create LangChain tool
+                # Create args schema from MCP tool inputSchema
+                args_schema = self._create_args_schema(tool_name, tool_data)
+
+                # Create LangChain tool with proper schema
                 langchain_tool = StructuredTool(
                     name=tool_name,
                     description=tool_description,
                     func=tool_func,
+                    args_schema=args_schema,
                 )
                 tools.append(langchain_tool)
 
         return tools
+
+    def _create_args_schema(self, tool_name: str, tool_data: Dict[str, Any]) -> type[BaseModel]:
+        """Create a simple Pydantic schema that accepts all arguments."""
+        # Create the most basic schema possible with a single catch-all field
+        return create_model(
+            f"{tool_name.replace('-', '_').replace(' ', '_')}_Args"
+        )
 
     async def bind_tools_to_llm(self, llm):
         """Bind MCP tools to a LangChain LLM."""
