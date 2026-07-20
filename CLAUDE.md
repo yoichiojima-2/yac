@@ -160,5 +160,3 @@ This project uses MCP (Model Context Protocol) servers extensively for tool func
 - Easier maintenance and extensibility
 
 **Minimal Codebase Philosophy**: Keep the codebase as minimal and readable as possible. Prefer leveraging existing libraries and tools (like LangChain for model providers and MCP for tools) over building custom implementations. Only add code when absolutely necessary for core functionality. Code should be simple, clear, and easy to understand - avoid complex abstractions when simpler solutions work.
-
-See ARCHITECTURE.md for detailed design.

@@ -6,9 +6,9 @@ import sys
 from pathlib import Path
 from unittest.mock import Mock, patch, AsyncMock
 
-from yet_claude_code.mcp.client import MCPClient
-from yet_claude_code.mcp.config import MCPServerConfig, MCPTransport
-from yet_claude_code.mcp.defaults import get_default_mcp_servers
+from yac.mcp.client import MCPClient
+from yac.mcp.config import MCPServerConfig, MCPTransport
+from yac.mcp.defaults import get_default_mcp_servers
 
 # Add the mocks directory to the path
 sys.path.insert(0, str(Path(__file__).parent / "mocks"))
@@ -79,7 +79,7 @@ class TestMCPIntegration:
         mock_session.call_tool = AsyncMock(side_effect=Exception("File not found"))
         client.sessions["test_server"] = mock_session
 
-        from yet_claude_code.mcp.config import MCPToolCall
+        from yac.mcp.config import MCPToolCall
 
         tool_call = MCPToolCall(
             server_name="test_server",
@@ -223,7 +223,7 @@ class TestErrorScenarios:
     @pytest.mark.asyncio
     async def test_malformed_json_response(self):
         """Test handling of malformed JSON responses."""
-        from yet_claude_code.mcp.simple_session import SimpleClientSession
+        from yac.mcp.simple_session import SimpleClientSession
 
         # Mock process with malformed JSON
         mock_process = Mock()
@@ -242,7 +242,7 @@ class TestErrorScenarios:
     @pytest.mark.asyncio
     async def test_empty_response_handling(self):
         """Test handling of empty responses from servers."""
-        from yet_claude_code.mcp.simple_session import SimpleClientSession
+        from yac.mcp.simple_session import SimpleClientSession
 
         mock_process = Mock()
         mock_process.stdout = Mock()
@@ -330,9 +330,9 @@ class TestErrorScenarios:
     @pytest.mark.asyncio
     async def test_network_error_simulation(self):
         """Test network error simulation and recovery."""
-        from yet_claude_code.cli.app import YetClaudeCodeApp
+        from yac.cli.app import YACApp
 
-        app = YetClaudeCodeApp()
+        app = YACApp()
 
         # Mock tool call that fails with network error
         tools = []

@@ -1,15 +1,13 @@
 # yac
 
-yac (yet-another-claude) is an alternative implementation of Claude Code that provides model flexibility. While Claude Code only works with Claude models, this project delivers the same core features but with the ability to switch between different AI models.
+yac (yet-another-claude) is an alternative take on Claude Code with model flexibility. While Claude Code only works with Claude models, yac delivers the same core idea — an agentic coding assistant in your terminal — with the ability to switch between AI providers.
 
 ## Features
 
-- **Multi-Model Support**: Use OpenAI (GPT-4), Anthropic (Claude), Google (Gemini), or local models via Ollama
-- **Provider Abstraction**: Clean interface for adding new AI providers
-- **Streaming Support**: Real-time responses from AI models
-- **Tool System**: MCP-based tool integration (coming soon)
-- **Configuration**: Flexible configuration via YAML files
-- **CLI Interface**: Simple command-line interface
+- **Multi-Provider Support**: OpenAI, Anthropic (Claude), or Google (Gemini) via LangChain
+- **Tool System**: MCP-based tool integration — default servers (filesystem, git, fetch, terminal, puppeteer, sequential-thinking) are set up automatically and their tools are bound to the model
+- **Agentic Loop**: the model can call tools, read the results, and keep going until the task is done
+- **Runtime MCP Management**: add, remove, and inspect MCP servers from within the CLI
 
 ## Installation
 
@@ -17,42 +15,41 @@ yac (yet-another-claude) is an alternative implementation of Claude Code that pr
 pip install -e .
 ```
 
+Default MCP servers are launched with `npx`, so Node.js is required for tool support (chat works without it).
+
 ## Quick Start
 
 ```bash
-# Use default provider (OpenAI)
+# Set up an API key for your provider
+export OPENAI_API_KEY=your-api-key
+
+# Use the default provider (OpenAI)
 yac
 
-# Use a specific provider
-yac --provider openai --model gpt-4
-
-# Set up API key
-export OPENAI_API_KEY=your-api-key
+# Or pick a provider/model explicitly
+yac --provider anthropic --model claude-sonnet-4-6
 ```
 
 ## Configuration
 
-Create `~/.yet-claude-code/config.yaml`:
+Provider selection is via environment variables:
 
-```yaml
-provider: openai
-model: gpt-4-turbo-preview
+| Variable | Meaning | Default |
+| --- | --- | --- |
+| `YAC_PROVIDER` | `openai`, `anthropic`, or `google` | `openai` |
+| `YAC_MODEL` | Model name for the chosen provider | per-provider default |
+| `YAC_STREAM` | Enable streaming on the LLM client | `true` |
+| `OPENAI_API_KEY` / `ANTHROPIC_API_KEY` / `GOOGLE_API_KEY` | Provider API keys | — |
+| `BRAVE_API_KEY`, `GITHUB_TOKEN`, `SLACK_BOT_TOKEN` | Optional; enable the Brave Search / GitHub / Slack MCP servers | — |
 
-api_keys:
-  openai: ${OPENAI_API_KEY}
-  anthropic: ${ANTHROPIC_API_KEY}
-  google: ${GOOGLE_API_KEY}
-
-stream: true
-```
+MCP server configuration persists in `~/.yac/config.json`.
 
 ## CLI Commands
 
-- `/help` - Show available commands
-- `/exit` - Exit the application
-- `/clear` - Clear conversation history
-- `/model` - Show or set the current model
-- `/tokens` - Show token count
+- `/help` — Show available commands
+- `/clear` — Clear conversation history
+- `/exit` (also `/quit`, `/q`) — Exit
+- `/mcp add|remove|list|tools|available` — Manage MCP servers at runtime
 
 ## Development
 
@@ -67,16 +64,12 @@ pytest
 ruff check src/
 ```
 
-## Architecture
-
-See [ARCHITECTURE.md](ARCHITECTURE.md) for detailed design information.
-
 ## Status
 
-This is an early-stage project. Core features implemented:
--  Provider abstraction layer
--  OpenAI provider
--  Basic CLI interface
-- ó MCP integration (in progress)
-- ó Additional providers (planned)
-- ó Context management (planned)
+This is an early-stage project. Current state:
+
+- Provider abstraction via LangChain (OpenAI, Anthropic, Google) — implemented
+- MCP integration with a default server set and runtime `/mcp` management — implemented
+- Interactive CLI — implemented
+- Context management — planned
+- Additional providers (e.g. local models) — planned

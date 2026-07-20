@@ -2,18 +2,18 @@
 
 import pytest
 from unittest.mock import Mock, patch, AsyncMock
-from yet_claude_code.mcp.config import (
+from yac.mcp.config import (
     MCPServerConfig,
     MCPTransport,
     MCPToolCall,
     MCPToolResult,
 )
-from yet_claude_code.mcp.client import MCPClient
-from yet_claude_code.mcp.defaults import (
+from yac.mcp.client import MCPClient
+from yac.mcp.defaults import (
     get_default_mcp_servers,
     get_optional_mcp_servers,
 )
-from yet_claude_code.mcp.langchain_bridge import (
+from yac.mcp.langchain_bridge import (
     MCPLangChainBridge,
     json_schema_to_pydantic_fields,
 )

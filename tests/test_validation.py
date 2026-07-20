@@ -4,13 +4,13 @@ import os
 import tempfile
 import pytest
 
-from yet_claude_code.cli.validators import (
+from yac.cli.validators import (
     ConfigValidator,
     ValidationReporter,
     ValidationSeverity,
     ValidationIssue,
 )
-from yet_claude_code.cli.config import Config
+from yac.cli.config import Config
 
 
 class TestConfigValidator:
