@@ -38,7 +38,7 @@ class MCPLangChainBridge:
                     StructuredTool(
                         name=tool_name,
                         description=tool_description,
-                        func=make_tool_func(server, tool_name),
+                        coroutine=make_tool_func(server, tool_name),
                         args_schema=args_schema,
                     )
                 )

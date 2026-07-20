@@ -344,6 +344,36 @@ class TestMCPLangChainBridge:
         assert set(fields) == {"args"}
         assert not fields["args"].is_required()
 
+    @pytest.mark.asyncio
+    async def test_tool_ainvoke_returns_mcp_result(self):
+        """Tools must be built as coroutines: ainvoke returns the MCP result,
+        not an un-awaited coroutine object."""
+        client = Mock(spec=MCPClient)
+        client.list_tools = AsyncMock(
+            return_value={
+                "srv": [
+                    {
+                        "name": "echo",
+                        "description": "echo back",
+                        "inputSchema": {
+                            "type": "object",
+                            "properties": {"text": {"type": "string"}},
+                            "required": ["text"],
+                        },
+                    }
+                ]
+            }
+        )
+        client.call_tool = AsyncMock(return_value="echoed: hi")
+
+        bridge = MCPLangChainBridge(client)
+        tools = await bridge.get_langchain_tools()
+        assert len(tools) == 1
+
+        result = await tools[0].ainvoke({"text": "hi"})
+        assert result == "echoed: hi"
+        client.call_tool.assert_awaited_once_with("srv", "echo", {"text": "hi"})
+
 
 if __name__ == "__main__":
     pytest.main([__file__])

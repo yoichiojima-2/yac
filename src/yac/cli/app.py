@@ -258,7 +258,8 @@ Be methodical and persistent. Reason through each step aloud."""
             )
             # Bind MCP tools to the LLM
             try:
-                self.llm = await self.bridge.bind_tools_to_llm(self.base_llm)
+                tools = await self.bridge.get_langchain_tools()
+                self.llm = self.base_llm.bind_tools(tools)
                 self.display.print("✓ MCP tools bound to LLM")
             except Exception as e:
                 self.display.print(f"Warning: Failed to bind MCP tools: {e}")
