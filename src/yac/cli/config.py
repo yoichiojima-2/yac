@@ -22,11 +22,11 @@ class Config:
     def get_model(self) -> str:
         provider = self.get_provider()
         defaults = {
-            "openai": "o3-mini",
-            "anthropic": "claude-3-sonnet-20240229",
-            "google": "gemini-pro",
+            "openai": "gpt-5.6-terra",
+            "anthropic": "claude-sonnet-5",
+            "google": "gemini-3.5-flash",
         }
-        return os.getenv("YAC_MODEL", defaults.get(provider, "gpt-4-turbo-preview"))
+        return os.getenv("YAC_MODEL", defaults.get(provider, "gpt-5.6-terra"))
 
     def get_api_key(self, provider: str) -> str | None:
         env_vars = {

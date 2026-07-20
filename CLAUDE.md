@@ -19,7 +19,7 @@ The project uses modern Python packaging standards with `pyproject.toml` configu
 ```
 src/yac/             # Main package directory
 ├── __init__.py       # Package initialization
-├── main.py          # Main entry point
+├── __main__.py      # `python -m yac` entry point
 ├── cli/             # Command-line interface
 │   └── app.py       # CLI application and MCP orchestration
 └── mcp/             # MCP (Model Context Protocol) integration

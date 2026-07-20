@@ -27,7 +27,7 @@ export OPENAI_API_KEY=your-api-key
 yac
 
 # Or pick a provider/model explicitly
-yac --provider anthropic --model claude-sonnet-4-6
+yac --provider anthropic --model claude-sonnet-5
 ```
 
 ## Configuration
@@ -37,7 +37,7 @@ Provider selection is via environment variables:
 | Variable | Meaning | Default |
 | --- | --- | --- |
 | `YAC_PROVIDER` | `openai`, `anthropic`, or `google` | `openai` |
-| `YAC_MODEL` | Model name for the chosen provider | per-provider default |
+| `YAC_MODEL` | Model name for the chosen provider | `gpt-5.6-terra` / `claude-sonnet-5` / `gemini-3.5-flash` |
 | `YAC_STREAM` | Enable streaming on the LLM client | `true` |
 | `OPENAI_API_KEY` / `ANTHROPIC_API_KEY` / `GOOGLE_API_KEY` | Provider API keys | — |
 | `BRAVE_API_KEY`, `GITHUB_TOKEN`, `SLACK_BOT_TOKEN` | Optional; enable the Brave Search / GitHub / Slack MCP servers | — |

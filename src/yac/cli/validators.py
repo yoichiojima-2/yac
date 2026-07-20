@@ -31,6 +31,10 @@ class ConfigValidator:
     # Known valid models for each provider
     VALID_MODELS = {
         "openai": [
+            "gpt-5.6-sol",
+            "gpt-5.6-terra",
+            "gpt-5.6-luna",
+            "gpt-5.2",
             "gpt-4o",
             "gpt-4o-mini",
             "gpt-4-turbo",
@@ -42,6 +46,7 @@ class ConfigValidator:
             "o3-mini",
         ],
         "anthropic": [
+            "claude-sonnet-5",
             "claude-3-5-sonnet-20241022",
             "claude-3-5-haiku-20241022",
             "claude-3-opus-20240229",
@@ -49,6 +54,7 @@ class ConfigValidator:
             "claude-3-haiku-20240307",
         ],
         "google": [
+            "gemini-3.5-flash",
             "gemini-1.5-pro",
             "gemini-1.5-flash",
             "gemini-1.0-pro",

@@ -1,6 +1,5 @@
 """Tests for configuration validation functionality."""
 
-import os
 import tempfile
 import pytest
 
@@ -22,7 +21,7 @@ class TestConfigValidator:
 
         # Test with valid OpenAI config
         issues = validator.validate_provider_config(
-            "openai", "o3-mini", "sk-test123456789"
+            "openai", "gpt-5.6-terra", "sk-test123456789"
         )
 
         # Should have no errors, maybe warnings about unknown model
@@ -45,27 +44,20 @@ class TestConfigValidator:
         assert len(errors) >= 1
         assert any("Unknown provider" in issue.message for issue in errors)
 
-    def test_missing_api_key(self):
+    def test_missing_api_key(self, monkeypatch):
         """Test validation with missing API key."""
         validator = ConfigValidator()
 
         # Clear any existing OpenAI API key for this test
-        original_key = os.environ.get("OPENAI_API_KEY")
-        if "OPENAI_API_KEY" in os.environ:
-            del os.environ["OPENAI_API_KEY"]
+        monkeypatch.delenv("OPENAI_API_KEY", raising=False)
 
-        try:
-            issues = validator.validate_provider_config("openai", "gpt-4", None)
+        issues = validator.validate_provider_config("openai", "gpt-4", None)
 
-            errors = [
-                issue for issue in issues if issue.severity == ValidationSeverity.ERROR
-            ]
-            assert len(errors) >= 1
-            assert any("Missing API key" in issue.message for issue in errors)
-        finally:
-            # Restore original key if it existed
-            if original_key:
-                os.environ["OPENAI_API_KEY"] = original_key
+        errors = [
+            issue for issue in issues if issue.severity == ValidationSeverity.ERROR
+        ]
+        assert len(errors) >= 1
+        assert any("Missing API key" in issue.message for issue in errors)
 
     def test_invalid_mcp_server_config(self):
         """Test validation of invalid MCP server configuration."""
@@ -240,14 +232,13 @@ class TestConfigIntegration:
             has_errors = config.has_validation_errors(temp_dir)
             assert isinstance(has_errors, bool)
 
-    @pytest.mark.skipif(
-        not os.getenv("OPENAI_API_KEY"), reason="No OpenAI API key available"
-    )
-    def test_validation_with_real_api_key(self):
-        """Test validation with real API key (if available)."""
-        config = Config()
+    def test_validation_with_api_key_set(self, monkeypatch):
+        """Validation reports no missing-key error when the key is set."""
+        monkeypatch.delenv("YAC_PROVIDER", raising=False)
+        monkeypatch.delenv("YAC_MODEL", raising=False)
+        monkeypatch.setenv("OPENAI_API_KEY", "sk-test123456789")
 
-        # This should pass validation if OPENAI_API_KEY is set
+        config = Config()
         report = config.validate_configuration()
 
         # Should not have API key errors

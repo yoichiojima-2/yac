@@ -1,99 +1,97 @@
 """Integration tests for MCP server connections and functionality."""
 
 import asyncio
+import json
 import pytest
-import sys
 from pathlib import Path
 from unittest.mock import Mock, patch, AsyncMock
 
 from yac.mcp.client import MCPClient
 from yac.mcp.config import MCPServerConfig, MCPTransport
 from yac.mcp.defaults import get_default_mcp_servers
+from yac.mcp.simple_session import SimpleClientSession
 
-# Add the mocks directory to the path
-sys.path.insert(0, str(Path(__file__).parent / "mocks"))
+INIT_RESPONSE = b'{"jsonrpc": "2.0", "id": 2, "result": {"capabilities": {}}}\n'
+TOOLS_RESPONSE = (
+    b'{"jsonrpc": "2.0", "id": 3, "result": {"tools": '
+    b'[{"name": "demo_tool", "description": "A demo tool", "inputSchema": {}}]}}\n'
+)
+
+
+def make_mock_process(readline_side_effect):
+    """Build a mock subprocess that speaks newline-delimited JSON-RPC."""
+    process = Mock()
+    process.stdin = Mock()
+    process.stdin.write = Mock()
+    process.stdin.drain = AsyncMock()
+    process.stdout = Mock()
+    process.stdout.readline = AsyncMock(side_effect=readline_side_effect)
+    process.stdout.read = AsyncMock(return_value=b"")
+    return process
 
 
 class TestMCPIntegration:
     """Test MCP server connections and tool execution."""
 
     @pytest.mark.asyncio
-    async def test_filesystem_server_connection(self):
-        """Test that filesystem MCP server connects successfully."""
+    async def test_server_connection_and_tool_caching(self):
+        """A successful handshake registers the session and caches its tools."""
         client = MCPClient()
         config = MCPServerConfig(
             name="test_filesystem",
             transport=MCPTransport.STDIO,
-            command=[
-                "echo",
-                '{"jsonrpc": "2.0", "id": 1, "result": {"capabilities": {}}}',
-            ],
+            command=["fake-server"],
         )
 
-        with patch("asyncio.create_subprocess_exec") as mock_subprocess:
-            # Mock successful process
-            mock_process = Mock()
-            mock_process.stdin = Mock()
-            mock_process.stdin.write = Mock()
-            mock_process.stdin.drain = AsyncMock()
-            mock_process.stdout = Mock()
-            mock_process.stdout.readline = AsyncMock(
-                return_value=b'{"jsonrpc": "2.0", "id": 1, "result": {"capabilities": {}}}\n'
-            )
-            mock_subprocess.return_value = mock_process
-
+        mock_process = make_mock_process([INIT_RESPONSE, TOOLS_RESPONSE])
+        with patch(
+            "asyncio.create_subprocess_exec",
+            new=AsyncMock(return_value=mock_process),
+        ):
             success = await client.add_server(config)
-            assert success
-            assert "test_filesystem" in client.sessions
+
+        assert success
+        assert "test_filesystem" in client.sessions
+        tools = await client.list_tools("test_filesystem")
+        assert [t["name"] for t in tools["test_filesystem"]] == ["demo_tool"]
 
     @pytest.mark.asyncio
     async def test_server_connection_timeout(self):
-        """Test that server connections timeout gracefully."""
+        """Server connections that never respond fail gracefully."""
         client = MCPClient()
         config = MCPServerConfig(
             name="test_timeout",
             transport=MCPTransport.STDIO,
-            command=["sleep", "10"],  # Will timeout
+            command=["fake-server"],
         )
 
-        with patch("asyncio.create_subprocess_exec") as mock_subprocess:
-            # Mock hanging process
-            mock_process = Mock()
-            mock_process.stdin = Mock()
-            mock_process.stdin.write = Mock()
-            mock_process.stdin.drain = AsyncMock()
-            mock_process.stdout = Mock()
-            mock_process.stdout.readline = AsyncMock(side_effect=asyncio.TimeoutError())
-            mock_subprocess.return_value = mock_process
-
+        mock_process = make_mock_process(asyncio.TimeoutError())
+        with patch(
+            "asyncio.create_subprocess_exec",
+            new=AsyncMock(return_value=mock_process),
+        ):
             success = await client.add_server(config)
-            assert not success
+
+        assert not success
+        assert "test_timeout" not in client.sessions
 
     @pytest.mark.asyncio
-    async def test_tool_execution_with_error_recovery(self):
-        """Test tool execution with intelligent error recovery."""
+    async def test_call_tool_propagates_session_error(self):
+        """Errors raised by the session surface to the caller."""
         client = MCPClient()
 
-        # Mock session with failing tool
         mock_session = Mock()
         mock_session.call_tool = AsyncMock(side_effect=Exception("File not found"))
         client.sessions["test_server"] = mock_session
 
-        from yac.mcp.config import MCPToolCall
-
-        tool_call = MCPToolCall(
-            server_name="test_server",
-            name="read_file",
-            arguments={"path": "nonexistent.txt"},
-        )
-
-        result = await client.call_tool(tool_call)
-        assert result.is_error
-        assert "File not found" in result.content
+        with pytest.raises(Exception, match="File not found"):
+            await client.call_tool(
+                "test_server", "read_file", {"path": "nonexistent.txt"}
+            )
 
     @pytest.mark.asyncio
     async def test_default_servers_configuration(self):
-        """Test that default server configurations are valid."""
+        """Default server configurations are valid."""
         servers = get_default_mcp_servers()
 
         # Check that all expected servers are present
@@ -108,75 +106,58 @@ class TestMCPIntegration:
 
     @pytest.mark.asyncio
     async def test_large_response_handling(self):
-        """Test handling of large JSON responses."""
-        client = MCPClient()
-
-        # Create a large JSON response (>8KB)
+        """Responses split across the readline buffer are reassembled."""
         large_data = "x" * 10000
-        large_response = (
-            f'{{"jsonrpc": "2.0", "id": 1, "result": {{"data": "{large_data}"}}}}\n'
+        payload = (
+            json.dumps(
+                {"jsonrpc": "2.0", "id": 2, "result": {"data": large_data}}
+            ).encode()
+            + b"\n"
         )
 
-        config = MCPServerConfig(
-            name="test_large",
-            transport=MCPTransport.STDIO,
-            command=["echo", large_response],
-        )
+        # First chunk arrives via readline, the rest via read()
+        first_chunk, rest = payload[:100], payload[100:]
 
-        with patch("asyncio.create_subprocess_exec") as mock_subprocess:
-            mock_process = Mock()
-            mock_process.stdin = Mock()
-            mock_process.stdin.write = Mock()
-            mock_process.stdin.drain = AsyncMock()
-            mock_process.stdout = Mock()
-            mock_process.stdout.readline = AsyncMock(
-                return_value=large_response.encode()
-            )
-            mock_subprocess.return_value = mock_process
+        mock_process = make_mock_process([first_chunk])
+        mock_process.stdout.read = AsyncMock(side_effect=[rest])
 
-            success = await client.add_server(config)
-            assert success
+        session = SimpleClientSession(mock_process)
+        response = await session._send_request("tools/list")
+
+        assert response["result"]["data"] == large_data
 
     @pytest.mark.asyncio
     async def test_concurrent_server_connections(self):
-        """Test connecting to multiple servers concurrently."""
+        """Multiple servers can be connected concurrently."""
         client = MCPClient()
 
-        # Create multiple server configs
-        configs = []
-        for i in range(3):
-            configs.append(
-                MCPServerConfig(
-                    name=f"test_server_{i}",
-                    transport=MCPTransport.STDIO,
-                    command=[
-                        "echo",
-                        '{"jsonrpc": "2.0", "id": 1, "result": {"capabilities": {}}}',
-                    ],
+        configs = [
+            MCPServerConfig(
+                name=f"test_server_{i}",
+                transport=MCPTransport.STDIO,
+                command=["fake-server"],
+            )
+            for i in range(3)
+        ]
+
+        with patch(
+            "asyncio.create_subprocess_exec",
+            new=AsyncMock(
+                side_effect=lambda *args, **kwargs: make_mock_process(
+                    [INIT_RESPONSE, TOOLS_RESPONSE]
                 )
+            ),
+        ):
+            results = await asyncio.gather(
+                *(client.add_server(config) for config in configs),
+                return_exceptions=True,
             )
 
-        with patch("asyncio.create_subprocess_exec") as mock_subprocess:
-            mock_process = Mock()
-            mock_process.stdin = Mock()
-            mock_process.stdin.write = Mock()
-            mock_process.stdin.drain = AsyncMock()
-            mock_process.stdout = Mock()
-            mock_process.stdout.readline = AsyncMock(
-                return_value=b'{"jsonrpc": "2.0", "id": 1, "result": {"capabilities": {}}}\n'
-            )
-            mock_subprocess.return_value = mock_process
-
-            # Connect to all servers concurrently
-            tasks = [client.add_server(config) for config in configs]
-            results = await asyncio.gather(*tasks, return_exceptions=True)
-
-            # All should succeed
-            assert all(result is True for result in results)
-            assert len(client.sessions) == 3
+        assert all(result is True for result in results)
+        assert len(client.sessions) == 3
 
     def test_server_config_validation(self):
-        """Test server configuration validation."""
+        """Server configuration validation."""
         # Valid config
         config = MCPServerConfig(
             name="test", transport=MCPTransport.STDIO, command=["echo", "test"]
@@ -184,80 +165,63 @@ class TestMCPIntegration:
         assert config.name == "test"
         assert config.transport == MCPTransport.STDIO
 
-        # Invalid transport should raise error
+        # STDIO without a command is invalid
         with pytest.raises(ValueError):
-            MCPServerConfig(
-                name="test",
-                transport="invalid",  # type: ignore
-                command=["echo", "test"],
-            )
+            MCPServerConfig(name="test", transport=MCPTransport.STDIO)
+
+        # HTTP/SSE without a URL is invalid
+        with pytest.raises(ValueError):
+            MCPServerConfig(name="test", transport=MCPTransport.HTTP)
+
+        # Unknown transport values are rejected by the enum
+        with pytest.raises(ValueError):
+            MCPTransport("invalid")
 
     @pytest.mark.asyncio
     async def test_graceful_shutdown(self):
-        """Test graceful shutdown of MCP client."""
+        """Graceful shutdown closes all sessions and clears state."""
         client = MCPClient()
 
-        # Add a mock server
         mock_session = Mock()
         mock_session.close = AsyncMock()
         client.sessions["test_server"] = mock_session
+        client.tools_cache["test_server"] = []
 
-        mock_process = Mock()
-        mock_process.terminate = Mock()
-        mock_process.wait = AsyncMock()
-        client.processes["test_server"] = mock_process
-
-        # Test graceful shutdown
         await client.close_all()
 
-        # Verify cleanup
-        mock_session.close.assert_called_once()
-        mock_process.terminate.assert_called_once()
+        mock_session.close.assert_awaited_once()
         assert len(client.sessions) == 0
-        assert len(client.processes) == 0
+        assert len(client.tools_cache) == 0
 
 
 class TestErrorScenarios:
     """Test various error scenarios and recovery mechanisms."""
 
     @pytest.mark.asyncio
-    async def test_malformed_json_response(self):
-        """Test handling of malformed JSON responses."""
-        from yac.mcp.simple_session import SimpleClientSession
-
-        # Mock process with malformed JSON
-        mock_process = Mock()
-        mock_process.stdout = Mock()
-        mock_process.stdout.readline = AsyncMock(return_value=b"invalid json\n")
-
+    async def test_server_error_response(self):
+        """JSON-RPC error responses raise an exception."""
+        error_response = (
+            b'{"jsonrpc": "2.0", "id": 2, '
+            b'"error": {"code": -32601, "message": "Method not found"}}\n'
+        )
+        mock_process = make_mock_process([error_response])
         session = SimpleClientSession(mock_process)
 
-        with pytest.raises(Exception) as exc_info:
+        with pytest.raises(Exception, match="Server error"):
             await session._send_request("test_method")
-
-        assert "Failed to read large response" in str(
-            exc_info.value
-        ) or "Server error" in str(exc_info.value)
 
     @pytest.mark.asyncio
     async def test_empty_response_handling(self):
-        """Test handling of empty responses from servers."""
-        from yac.mcp.simple_session import SimpleClientSession
-
-        mock_process = Mock()
-        mock_process.stdout = Mock()
-        mock_process.stdout.readline = AsyncMock(return_value=b"")  # Empty response
-
+        """Empty responses from servers raise an exception."""
+        mock_process = make_mock_process([b""])
         session = SimpleClientSession(mock_process)
 
-        with pytest.raises(Exception) as exc_info:
+        with pytest.raises(Exception, match="No response from server"):
             await session._send_request("test_method")
-
-        assert "No response from server" in str(exc_info.value)
 
     @pytest.mark.asyncio
     async def test_process_crash_handling(self):
-        """Test handling when MCP server process crashes."""
+        """A server process that exits immediately fails gracefully."""
         client = MCPClient()
 
         config = MCPServerConfig(
@@ -271,7 +235,7 @@ class TestErrorScenarios:
 
     @pytest.mark.asyncio
     async def test_mock_filesystem_server(self):
-        """Test integration with mock filesystem server."""
+        """Integration with a real subprocess speaking the MCP protocol."""
         client = MCPClient()
 
         # Use Python to run our mock server
@@ -282,64 +246,25 @@ class TestErrorScenarios:
             command=["python", str(mock_server_path), "filesystem"],
         )
 
-        success = await client.add_server(config)
-        assert success
-        assert "mock_filesystem" in client.sessions
+        try:
+            success = await client.add_server(config)
+            assert success
+            assert "mock_filesystem" in client.sessions
 
-        # Test tool listing
-        tools = await client.list_tools("mock_filesystem")
-        assert "mock_filesystem" in tools
-        assert len(tools["mock_filesystem"]) > 0
+            # Test tool listing
+            tools = await client.list_tools("mock_filesystem")
+            assert "mock_filesystem" in tools
+            assert len(tools["mock_filesystem"]) > 0
 
-        # Verify expected tools are present
-        tool_names = [tool["name"] for tool in tools["mock_filesystem"]]
-        expected_tools = ["read_file", "write_file", "list_directory", "search_files"]
-        for expected_tool in expected_tools:
-            assert expected_tool in tool_names
-
-    @pytest.mark.asyncio
-    async def test_retry_mechanism_with_mock(self):
-        """Test retry mechanism with a server that fails initially."""
-        client = MCPClient()
-        client.retry_config["max_retries"] = 2  # Reduce for faster testing
-
-        # Configure to fail initially, then succeed
-        call_count = 0
-        original_connect = client._connect_stdio_server
-
-        async def failing_connect(config):
-            nonlocal call_count
-            call_count += 1
-            if call_count == 1:
-                raise Exception("Initial connection failure")
-            return await original_connect(config)
-
-        client._connect_stdio_server = failing_connect
-
-        mock_server_path = Path(__file__).parent / "mocks" / "mock_mcp_server.py"
-        config = MCPServerConfig(
-            name="retry_test",
-            transport=MCPTransport.STDIO,
-            command=["python", str(mock_server_path), "filesystem"],
-        )
-
-        success = await client.add_server(config)
-        assert success
-        assert call_count == 2  # Should have retried once
-
-    @pytest.mark.asyncio
-    async def test_network_error_simulation(self):
-        """Test network error simulation and recovery."""
-        from yac.cli.app import YACApp
-
-        app = YACApp()
-
-        # Mock tool call that fails with network error
-        tools = []
-
-        # Test network error handling
-        result = await app._handle_network_error(
-            "fetch_url", {"url": "http://invalid"}, tools
-        )
-        # Should return None if retry fails
-        assert result is None
+            # Verify expected tools are present
+            tool_names = [tool["name"] for tool in tools["mock_filesystem"]]
+            expected_tools = [
+                "read_file",
+                "write_file",
+                "list_directory",
+                "search_files",
+            ]
+            for expected_tool in expected_tools:
+                assert expected_tool in tool_names
+        finally:
+            await client.close_all()

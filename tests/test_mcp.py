@@ -1,5 +1,7 @@
 """Tests for MCP functionality."""
 
+from typing import Optional
+
 import pytest
 from unittest.mock import Mock, patch, AsyncMock
 from yac.mcp.config import (
@@ -13,10 +15,7 @@ from yac.mcp.defaults import (
     get_default_mcp_servers,
     get_optional_mcp_servers,
 )
-from yac.mcp.langchain_bridge import (
-    MCPLangChainBridge,
-    json_schema_to_pydantic_fields,
-)
+from yac.mcp.langchain_bridge import MCPLangChainBridge
 
 
 class TestMCPServerConfig:
@@ -51,6 +50,18 @@ class TestMCPServerConfig:
         )
         assert config.env == {"API_KEY": "secret"}
 
+    def test_stdio_config_requires_command(self):
+        with pytest.raises(ValueError, match="requires command"):
+            MCPServerConfig(name="test-server", transport=MCPTransport.STDIO)
+
+    def test_http_config_requires_url(self):
+        with pytest.raises(ValueError, match="requires url"):
+            MCPServerConfig(name="test-server", transport=MCPTransport.HTTP)
+
+    def test_invalid_transport_value(self):
+        with pytest.raises(ValueError):
+            MCPTransport("invalid")
+
 
 class TestMCPToolCall:
     """Test MCP tool call data structures."""
@@ -83,9 +94,8 @@ class TestMCPClient:
 
     def test_client_initialization(self):
         client = MCPClient()
-        assert client.servers == {}
         assert client.sessions == {}
-        assert client.processes == {}
+        assert client.tools_cache == {}
 
     @pytest.mark.asyncio
     async def test_add_invalid_server(self):
@@ -93,26 +103,48 @@ class TestMCPClient:
         config = MCPServerConfig(
             name="invalid-server",
             transport=MCPTransport.STDIO,
-            command=["nonexistent-command"],
+            command=["nonexistent-command-xyz-12345"],
         )
 
-        # Should return False for invalid servers
+        # Should return False for servers that fail to connect
         result = await client.add_server(config)
         assert not result
-        assert (
-            "invalid-server" in client.servers
-        )  # Config is stored even if connection fails
+        assert "invalid-server" not in client.sessions
 
     @pytest.mark.asyncio
     async def test_call_tool_no_server(self):
         client = MCPClient()
-        tool_call = MCPToolCall(
-            server_name="nonexistent", name="test_tool", arguments={}
-        )
 
-        result = await client.call_tool(tool_call)
-        assert result.is_error
-        assert "not connected" in result.content
+        with pytest.raises(ValueError, match="not connected"):
+            await client.call_tool("nonexistent", "test_tool", {})
+
+    @pytest.mark.asyncio
+    async def test_call_tool_delegates_to_session(self):
+        client = MCPClient()
+        mock_session = Mock()
+        mock_session.call_tool = AsyncMock(
+            return_value={"content": [{"type": "text", "text": "ok"}]}
+        )
+        client.sessions["test-server"] = mock_session
+
+        result = await client.call_tool("test-server", "test_tool", {"a": 1})
+
+        mock_session.call_tool.assert_awaited_once_with("test_tool", {"a": 1})
+        assert result == {"content": [{"type": "text", "text": "ok"}]}
+
+    @pytest.mark.asyncio
+    async def test_remove_server(self):
+        client = MCPClient()
+        mock_session = Mock()
+        mock_session.close = AsyncMock()
+        client.sessions["test-server"] = mock_session
+        client.tools_cache["test-server"] = [{"name": "test_tool"}]
+
+        result = await client.remove_server("test-server")
+        assert result
+        assert "test-server" not in client.sessions
+        assert "test-server" not in client.tools_cache
+        mock_session.close.assert_awaited_once()
 
     @pytest.mark.asyncio
     async def test_remove_nonexistent_server(self):
@@ -126,15 +158,54 @@ class TestMCPClient:
         tools = await client.list_tools()
         assert tools == {}
 
+    @pytest.mark.asyncio
+    async def test_list_tools_filters_by_server(self):
+        client = MCPClient()
+        client.tools_cache = {
+            "server-a": [{"name": "tool_a"}],
+            "server-b": [{"name": "tool_b"}],
+        }
+
+        assert await client.list_tools("server-a") == {"server-a": [{"name": "tool_a"}]}
+        assert await client.list_tools("unknown") == {}
+        assert await client.list_tools() == client.tools_cache
+
+    @pytest.mark.asyncio
+    async def test_get_all_tools_annotates_server_name(self):
+        client = MCPClient()
+        client.tools_cache = {
+            "server-a": [{"name": "tool_a"}],
+            "server-b": [{"name": "tool_b"}],
+        }
+
+        all_tools = await client.get_all_tools()
+        assert {(t["name"], t["server_name"]) for t in all_tools} == {
+            ("tool_a", "server-a"),
+            ("tool_b", "server-b"),
+        }
+
+    @pytest.mark.asyncio
+    async def test_close_all(self):
+        client = MCPClient()
+        mock_session = Mock()
+        mock_session.close = AsyncMock()
+        client.sessions["test-server"] = mock_session
+        client.tools_cache["test-server"] = []
+
+        await client.close_all()
+
+        mock_session.close.assert_awaited_once()
+        assert client.sessions == {}
+        assert client.tools_cache == {}
+
 
 class TestMCPDefaults:
     """Test default MCP server configurations."""
 
     def test_get_default_servers(self):
         servers = get_default_mcp_servers()
-        assert "filesystem" in servers
-        assert "fetch" in servers
-        assert "puppeteer" in servers
+        for name in ["filesystem", "fetch", "git", "bash", "puppeteer"]:
+            assert name in servers
 
         # Check filesystem server config
         fs_server = servers["filesystem"]
@@ -166,48 +237,6 @@ class TestMCPDefaults:
 
 class TestMCPLangChainBridge:
     """Test MCP LangChain bridge functionality."""
-
-    def test_json_schema_to_pydantic_simple(self):
-        schema = {
-            "properties": {
-                "name": {"type": "string", "description": "A name"},
-                "age": {"type": "integer", "description": "An age"},
-            },
-            "required": ["name"],
-        }
-
-        fields = json_schema_to_pydantic_fields(schema)
-        assert len(fields) == 2
-        assert "name" in fields
-        assert "age" in fields
-
-        # Required field should not have None default
-        name_field = fields["name"]
-        assert name_field[0] is str
-
-        # Optional field should have None default
-        age_field = fields["age"]
-        assert age_field[0] is int
-
-    def test_json_schema_to_pydantic_types(self):
-        schema = {
-            "properties": {
-                "text": {"type": "string"},
-                "count": {"type": "integer"},
-                "price": {"type": "number"},
-                "active": {"type": "boolean"},
-                "items": {"type": "array"},
-            }
-        }
-
-        fields = json_schema_to_pydantic_fields(schema)
-        assert fields["text"][0] is str
-        assert fields["count"][0] is int
-        assert fields["price"][0] is float
-        assert fields["active"][0] is bool
-        from typing import List
-
-        assert fields["items"][0] == List[str]  # Simplified to List[str]
 
     @pytest.mark.asyncio
     async def test_bridge_initialization(self):
@@ -255,42 +284,65 @@ class TestMCPLangChainBridge:
         assert tool.name == "test_tool"
         assert tool.description == "A test tool"
         assert tool.args_schema is not None
+        assert "param" in tool.args_schema.model_fields
 
-    @pytest.mark.asyncio
-    async def test_bind_tools_to_llm_no_tools(self):
-        mock_client = Mock(spec=MCPClient)
-        mock_client.list_tools = AsyncMock(return_value={})
-        mock_llm = Mock()
-
-        bridge = MCPLangChainBridge(mock_client)
-        result = await bridge.bind_tools_to_llm(mock_llm)
-
-        # Should return original LLM if no tools
-        assert result == mock_llm
-
-    @pytest.mark.asyncio
-    async def test_bind_tools_to_llm_with_tools(self):
-        mock_client = Mock(spec=MCPClient)
-        mock_client.list_tools = AsyncMock(
-            return_value={
-                "test-server": [
-                    {
-                        "name": "test_tool",
-                        "description": "A test tool",
-                        "inputSchema": {},
-                    }
-                ]
-            }
+    def test_args_schema_required_vs_optional(self):
+        bridge = MCPLangChainBridge(Mock(spec=MCPClient))
+        schema = bridge._create_args_schema(
+            "test_tool",
+            {
+                "inputSchema": {
+                    "properties": {
+                        "name": {"type": "string", "description": "A name"},
+                        "age": {"type": "integer", "description": "An age"},
+                    },
+                    "required": ["name"],
+                }
+            },
         )
-        mock_llm = Mock()
-        mock_llm.bind_tools = Mock(return_value="bound_llm")
 
-        bridge = MCPLangChainBridge(mock_client)
-        result = await bridge.bind_tools_to_llm(mock_llm)
+        fields = schema.model_fields
+        assert set(fields) == {"name", "age"}
 
-        # Should call bind_tools on LLM
-        mock_llm.bind_tools.assert_called_once()
-        assert result == "bound_llm"
+        # Required field: bare type, no default
+        assert fields["name"].annotation is str
+        assert fields["name"].is_required()
+
+        # Optional field: Optional type with None default
+        assert fields["age"].annotation == Optional[int]
+        assert not fields["age"].is_required()
+        assert fields["age"].default is None
+
+    def test_args_schema_type_mapping(self):
+        bridge = MCPLangChainBridge(Mock(spec=MCPClient))
+        properties = {
+            "text": {"type": "string"},
+            "count": {"type": "integer"},
+            "price": {"type": "number"},
+            "active": {"type": "boolean"},
+            "items": {"type": "array"},
+            "meta": {"type": "object"},
+        }
+        schema = bridge._create_args_schema(
+            "test_tool",
+            {"inputSchema": {"properties": properties, "required": list(properties)}},
+        )
+
+        fields = schema.model_fields
+        assert fields["text"].annotation is str
+        assert fields["count"].annotation is int
+        assert fields["price"].annotation is float
+        assert fields["active"].annotation is bool
+        assert fields["items"].annotation is list
+        assert fields["meta"].annotation is dict
+
+    def test_args_schema_without_properties_gets_fallback(self):
+        bridge = MCPLangChainBridge(Mock(spec=MCPClient))
+        schema = bridge._create_args_schema("test_tool", {"inputSchema": {}})
+
+        fields = schema.model_fields
+        assert set(fields) == {"args"}
+        assert not fields["args"].is_required()
 
 
 if __name__ == "__main__":
